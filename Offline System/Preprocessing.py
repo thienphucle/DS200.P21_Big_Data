@@ -36,6 +36,7 @@ def convert_to_vietnam_time(utc_time):
 
 def preprocess_tiktok_data(df):
     df_clean = df.copy()
+    df_clean['vid_nshare'] = df_clean['vid_nshare'].replace('Share', 0)
 
     def convert_units(x):
         if isinstance(x, str):
@@ -55,7 +56,7 @@ def preprocess_tiktok_data(df):
             return x
         return np.nan
 
-    numeric_cols = ['user_nfollower', 'user_total_like', 'vid_nview', 'vid_nlike', 'vid_ncomment', 
+    numeric_cols = ['user_nfollower', 'user_total_likes', 'vid_nview', 'vid_nlike', 'vid_ncomment', 
                    'vid_nshare', 'vid_nsave', 'music_nused']
 
     for col in numeric_cols:
@@ -96,11 +97,12 @@ def preprocess_tiktok_data(df):
     df_clean['post_hour'] = df_clean['vid_postTime'].dt.hour
     df_clean['post_day'] = df_clean['vid_postTime'].dt.day_name()
 
+
     return df_clean
 
 def main():
-    infile = r"D:\UIT\DS200\Hashtag Analysis\IE403.P21_Social_Media_Data_Mining\finalProject\data\full_recrawl_final.csv"
-    outfile = r"D:\UIT\DS200\Hashtag Analysis\IE403.P21_Social_Media_Data_Mining\finalProject\results\preprocessed_full_recrawl_final.csv"
+    infile = r"D:\UIT\DS200\DS2000 Project\Preprocessed Data\training_data.csv"
+    outfile = r"D:\UIT\DS200\DS2000 Project\Preprocessed Data\training_data.csv"
 
     print(f"Loading data from {infile}...")
     df = pd.read_csv(infile)

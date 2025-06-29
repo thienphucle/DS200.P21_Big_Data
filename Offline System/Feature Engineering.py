@@ -11,19 +11,15 @@ class TikTokFeatureEngineer:
 
     def _preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
 
-        df['vid_postTime'] = pd.to_datetime(df['vid_postTime'])
-        df['vid_scrapeTime'] = pd.to_datetime(df['vid_scrapeTime'])
-
         # Số giờ kể từ thời điểm đăng đến lúc được crawl 
-        df['hour_since_post'] = (df['vid_scrapeTime'] - df['vid_postTime']).dt.total_seconds() / 3600.0
-        df['hour_since_post'] = df['hour_since_post'].clip(lower=1e-3)
+        df['vid_existtime_hrs'] = df['vid_existtime_hrs'].clip(lower=1e-3)
 
         # tổng số tương tác (like + comment + share + save).
-        df['engagement'] = df[['vid_nlike', 'vid_ncomment', 'vid_nshare', 'vid_nsave']].sum(axis=1)
+        df['vid_engagement'] = df[['vid_nlike', 'vid_ncomment', 'vid_nshare', 'vid_nsave']].sum(axis=1)
         # Tỷ lệ tương tác / view 
-        df['engagement_rate'] = df['engagement'] / df['vid_nview'].replace(0, np.nan)
+        df['vid_engagement_rate'] = df['vid_engagement'] / df['vid_nview'].replace(0, np.nan)
         # Tốc độ tăng view theo từng giờ 
-        df['growth_rate'] = df['vid_nview'] / df['hour_since_post']
+        df['vid_view_growth_rate'] = df['vid_nview'] / df['vid_existtime_hrs']
 
         return df
 
@@ -39,33 +35,41 @@ class TikTokFeatureEngineer:
 
             # 3 snapshot đầu (t0, t1, t2)
             X_group = group.iloc[:3]
-            delta = X_group.diff().fillna(0)
-            time_diff = X_group['vid_scrapeTime'].diff().dt.total_seconds().fillna(0) / 3600.0
+            cols_to_diff = ['vid_nview', 'vid_nlike', 'vid_ncomment', 'vid_nshare', 'vid_nsave']
+            delta = X_group[cols_to_diff].diff().fillna(0)
+            time_diff = X_group['vid_existtime_hrs'].diff().fillna(0)
             time_diff = time_diff.replace(0, np.nan)
  
 
             features = {
                 'user_name': user,
                 'vid_id': vid,
+                'vid_postTime' : group.iloc[-1]['vid_postTime'],
                 'vid_duration': group.iloc[-1]['vid_duration'],
-                'view_growth_per_hour': (delta['vid_nview'] / time_diff).mean(),
-                'like_growth_per_hour': (delta['vid_nlike'] / time_diff).mean(),
-                'comment_growth_per_hour': (delta['vid_ncomment'] / time_diff).mean(),
-                'share_growth_per_hour': (delta['vid_nshare'] / time_diff).mean(),
-                'save_growth_per_hour': (delta['vid_nsave'] / time_diff).mean(),
-                'engagement_growth_per_hour': (delta[['vid_nlike','vid_ncomment','vid_nshare','vid_nsave']].sum(axis=1) / time_diff).mean(),
+                'vid_view_growth_per_hour': (delta['vid_nview'] / time_diff).mean(),
+                'vid_like_growth_per_hour': (delta['vid_nlike'] / time_diff).mean(),
+                'vid_comment_growth_per_hour': (delta['vid_ncomment'] / time_diff).mean(),
+                'vid_share_growth_per_hour': (delta['vid_nshare'] / time_diff).mean(),
+                'vid_save_growth_per_hour': (delta['vid_nsave'] / time_diff).mean(),
+                'vid_engagement_growth_per_hour': (delta[['vid_nlike','vid_ncomment','vid_nshare','vid_nsave']].sum(axis=1) / time_diff).mean(),
+                #vid_engagement_rate_change': (delta[df['vid_engagement'] / df['vid_nview']]).mean()
             }
+
 
             # Snapshot thứ 4 (t3) – dùng làm nhãn
             t2 = group.iloc[2]
             t3 = group.iloc[3]
             delta_views = t3['vid_nview'] - t2['vid_nview']
-            delta_time = (t3['vid_scrapeTime'] - t2['vid_scrapeTime']).total_seconds() / 3600.0
+            delta_time = (t3['vid_existtime_hrs'] - t2['vid_existtime_hrs'])
             if delta_time == 0:
                 continue
 
             target_growth = delta_views / delta_time
             features['future_view_growth_per_hour'] = target_growth
+
+             # Tính engagement rate change
+            delta_engagement_rate = X_group['vid_engagement_rate'].diff().fillna(0)
+            features['vid_engagement_rate_change'] = delta_engagement_rate.mean()
 
             all_features.append(features)
 
@@ -79,12 +83,12 @@ class TikTokFeatureEngineer:
 
             agg = {
                 'user_name': user,
-                'avg_view_growth': group['view_growth_per_hour'].mean(),
-                'avg_like_growth': group['like_growth_per_hour'].mean(),
-                'avg_comment_growth': group['comment_growth_per_hour'].mean(),
-                'avg_share_growth': group['share_growth_per_hour'].mean(),
-                'avg_engagement_growth': group['engagement_growth_per_hour'].mean(),
-                'avg_engagement_rate_change': group['engagement_rate_change'].mean()
+                'user_avg_view_growth': group['vid_view_growth_per_hour'].mean(),
+                'user_avg_like_growth': group['vid_like_growth_per_hour'].mean(),
+                'user_avg_comment_growth': group['vid_comment_growth_per_hour'].mean(),
+                'user_avg_share_growth': group['vid_share_growth_per_hour'].mean(),
+                'user_avg_engagement_growth': group['vid_engagement_growth_per_hour'].mean(),
+                'user_avg_engagement_rate_change': group['vid_engagement_rate_change'].mean()
             }
             user_features.append(agg)
 
@@ -101,9 +105,9 @@ class TikTokFeatureEngineer:
         }
 
 def main():
-    infile = r""
-    feature_outfile = r""
-    trend_outfile = r""
+    infile = r"D:\UIT\DS200\DS2000 Project\Dataset\Preprocessed Data\training_data.csv"
+    feature_outfile = r"D:\UIT\DS200\DS2000 Project\Dataset\FE Results\Video_Feature.csv"
+    trend_outfile = r"D:\UIT\DS200\DS2000 Project\Dataset\FE Results\Trend_Feature.csv"
 
     # Đọc dữ liệu gốc từ file CSV
     df = pd.read_csv(infile)
