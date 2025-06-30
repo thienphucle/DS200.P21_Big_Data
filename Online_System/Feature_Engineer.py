@@ -8,21 +8,15 @@ class TikTokFeatureEngineerOnline:
         self.n_recent = n_recent_videos
 
     def _preprocess(self, df: pd.DataFrame) -> pd.DataFrame:
-        df['vid_postTime'] = pd.to_datetime(df['vid_postTime'])
-        df['vid_scrapeTime'] = pd.to_datetime(df['vid_scrapeTime'])
+        # Số giờ kể từ thời điểm đăng đến lúc được crawl 
+        df['vid_existtime_hrs'] = df['vid_existtime_hrs'].clip(lower=1e-3)
 
-        # Số giờ kể từ thời điểm đăng đến lúc được crawl
-        df['hour_since_post'] = (df['vid_scrapeTime'] - df['vid_postTime']).dt.total_seconds() / 3600.0
-        df['hour_since_post'] = df['hour_since_post'].clip(lower=1e-3)
-
-        # Tổng số tương tác (like + comment + share + save)
-        df['engagement'] = df[['vid_nlike', 'vid_ncomment', 'vid_nshare', 'vid_nsave']].sum(axis=1)
-
-        # Tỷ lệ tương tác / lượt xem
-        df['engagement_rate'] = df['engagement'] / df['vid_nview'].replace(0, np.nan)
-
-        # Tốc độ tăng view theo từng giờ
-        df['growth_rate'] = df['vid_nview'] / df['hour_since_post']
+        # tổng số tương tác (like + comment + share + save).
+        df['vid_engagement'] = df[['vid_nlike', 'vid_ncomment', 'vid_nshare', 'vid_nsave']].sum(axis=1)
+        # Tỷ lệ tương tác / view 
+        df['vid_engagement_rate'] = df['vid_engagement'] / df['vid_nview'].replace(0, np.nan)
+        # Tốc độ tăng view theo từng giờ 
+        df['vid_view_growth_rate'] = df['vid_nview'] / df['vid_existtime_hrs']
 
         return df
 

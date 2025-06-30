@@ -63,6 +63,7 @@ class TikTokPreprocessor:
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         df_clean = df.copy()
+        df_clean['vid_nshare'] = df_clean['vid_nshare'].replace('Share', 0)
 
         # Numeric conversion
         numeric_cols = ['user_nfollower', 'user_total_like', 'vid_nview', 'vid_nlike',
