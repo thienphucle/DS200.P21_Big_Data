@@ -658,7 +658,7 @@ class Visualizer:
         
         colors_reg = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6'] + ['#e67e22']
         bars1 = ax1.bar(model_names_reg, r2_scores, color=colors_reg[:len(model_names_reg)])
-        ax1.set_title('📈 Growth Prediction Accuracy (R² Score)', fontsize=14, fontweight='bold')
+        ax1.set_title('Growth Prediction Accuracy (R² Score)', fontsize=14, fontweight='bold')
         ax1.set_ylabel('R² Score (Higher = Better)', fontsize=12)
         ax1.set_ylim(0, max(r2_scores) * 1.1)
         ax1.grid(True, alpha=0.3)
@@ -677,7 +677,7 @@ class Visualizer:
         
         colors_cls = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6'] + ['#e67e22']
         bars2 = ax2.bar(model_names_cls, f1_scores, color=colors_cls[:len(model_names_cls)])
-        ax2.set_title('🎯 Growth Classification Accuracy (F1-Macro)', fontsize=14, fontweight='bold')
+        ax2.set_title('Growth Classification Accuracy (F1-Macro)', fontsize=14, fontweight='bold')
         ax2.set_ylabel('F1-Macro Score (Higher = Better)', fontsize=12)
         ax2.set_ylim(0, max(f1_scores) * 1.1)
         ax2.grid(True, alpha=0.3)
@@ -694,7 +694,7 @@ class Visualizer:
         # Simulate ROI based on prediction accuracy
         roi_multipliers = [score * 100 for score in r2_scores]  # Convert R² to ROI %
         bars3 = ax3.bar(model_names_reg, roi_multipliers, color=colors_reg[:len(model_names_reg)])
-        ax3.set_title('💰 Potential ROI from Accurate Predictions', fontsize=14, fontweight='bold')
+        ax3.set_title('Potential ROI from Accurate Predictions', fontsize=14, fontweight='bold')
         ax3.set_ylabel('Estimated ROI Improvement (%)', fontsize=12)
         ax3.grid(True, alpha=0.3)
         
@@ -720,7 +720,7 @@ class Visualizer:
             ax4.annotate(name, (eff, perf), xytext=(5, 5), textcoords='offset points', 
                         fontsize=10, fontweight='bold')
         
-        ax4.set_title('⚡ Model Efficiency vs Performance Trade-off', fontsize=14, fontweight='bold')
+        ax4.set_title(' Model Efficiency vs Performance Trade-off', fontsize=14, fontweight='bold')
         ax4.set_xlabel('Training Efficiency (Higher = Faster)', fontsize=12)
         ax4.set_ylabel('Prediction Accuracy (R²)', fontsize=12)
         ax4.grid(True, alpha=0.3)
@@ -728,26 +728,17 @@ class Visualizer:
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
-        
-        # Print economic insights
-        print("\n" + "="*60)
-        print("📊 ECONOMIC INSIGHTS & BUSINESS IMPACT")
-        print("="*60)
+
         
         best_reg_idx = np.argmax(r2_scores)
         best_cls_idx = np.argmax(f1_scores)
         
-        print(f"🏆 Best Growth Prediction Model: {model_names_reg[best_reg_idx]}")
+        print(f" Best Growth Prediction Model: {model_names_reg[best_reg_idx]}")
         print(f"   • R² Score: {r2_scores[best_reg_idx]:.3f}")
         print(f"   • Potential ROI Improvement: {roi_multipliers[best_reg_idx]:.1f}%")
         
-        print(f"\n🎯 Best Classification Model: {model_names_cls[best_cls_idx]}")
+        print(f"\n Best Classification Model: {model_names_cls[best_cls_idx]}")
         print(f"   • F1-Macro Score: {f1_scores[best_cls_idx]:.3f}")
-        
-        print(f"\n💡 KEY BUSINESS INSIGHTS:")
-        print(f"   • Accurate growth prediction can improve content strategy ROI by up to {max(roi_multipliers):.1f}%")
-        print(f"   • Modern gradient boosting models (XGBoost, LightGBM, CatBoost) show superior performance")
-        print(f"   • Neural networks provide competitive results but require more computational resources")
         
         return best_reg_idx, best_cls_idx
     
@@ -786,8 +777,6 @@ class Visualizer:
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
-        
-
 
 class Trainer:    
     def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
@@ -841,8 +830,9 @@ class Trainer:
         
         # Convert class labels to numbers
         growth_class_map = {'increase': 2, 'stable': 1, 'decrease': 0}
-        y_train_cls = train_df[class_cols].fillna('stable').replace(growth_class_map).values
-        y_val_cls = val_df[class_cols].fillna('stable').replace(growth_class_map).values
+        y_train_cls = train_df[class_cols].fillna('stable').replace(growth_class_map).values.astype(int)
+        y_val_cls = val_df[class_cols].fillna('stable').replace(growth_class_map).values.astype(int)
+
         
         return train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, y_train_cls, y_val_cls, feature_names
     
@@ -987,7 +977,7 @@ class Trainer:
         return baseline_results
     
     def evaluate_and_visualize(self, val_loader, y_val_reg, y_val_cls, baseline_results, 
-                              model_path='tiktok_model.pth'):        
+                              model_path='ModelResult/tiktok_model.pth'):        
         # Load best model
         checkpoint = torch.load(model_path, map_location=self.device)
         self.model = TikTokGrowthPredictor(text_dim=checkpoint['model_config']['text_dim'])
@@ -1046,18 +1036,18 @@ class Trainer:
         visualizer = Visualizer()
         
         best_reg_idx, best_cls_idx = visualizer.plot_model_performance_comparison(
-            neural_results, baseline_results, 'model_performance_economic.png'
+            neural_results, baseline_results, 'ModelResult/model_performance_economic.png'
         )
         
         visualizer.plot_feature_importance(
             self.baseline_models.feature_importance, 
             top_n=15, 
-            save_path='feature_importance_business.png'
+            save_path='ModelResult/feature_importance_business.png'
         )
         
         return neural_results, regression_predictions, classification_predictions
     
-    def predict(self, training_data, user_trend_features, text_features, model_path='tiktok_model.pth'):
+    def predict(self, training_data, user_trend_features, text_features, model_path='ModelResult/tiktok_model.pth'):
         checkpoint = torch.load(model_path, map_location=self.device)
         self.model = TikTokGrowthPredictor(text_dim=checkpoint['model_config']['text_dim'])
         self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -1145,4 +1135,4 @@ if __name__ == "__main__":
     )
 
     # Save results
-    results_df.to_csv('tiktok_predictions_with_modern_comparison.csv', index=False)
+    results_df.to_csv('ModelResult/tiktok_predictions.csv', index=False)
