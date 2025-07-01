@@ -1,0 +1,56 @@
+from kafka import KafkaProducer
+import pandas as pd
+import json
+from time import sleep
+from typing import List, Dict, Any
+
+from config import KAFKA_CONFIG, DATA_PATHS
+from Preprocessor import TikTokPreprocessor
+
+
+class SnapshotProducer:
+    def __init__(self):
+        self.topic = KAFKA_CONFIG['streaming_topic']
+        self.bootstrap_servers = KAFKA_CONFIG['bootstrap_servers']
+        self.delay = KAFKA_CONFIG['delay_between_messages']
+
+        self.producer = KafkaProducer(
+            bootstrap_servers=self.bootstrap_servers,
+            value_serializer=self._json_serializer
+        )
+
+        self.preprocessor = TikTokPreprocessor()
+
+    def _json_serializer(self, data: Dict[str, Any]) -> bytes:
+        return json.dumps(data, default=str).encode('utf-8')
+
+    def _load_snapshots_from_csv(self, filepath: str) -> List[Dict[str, Any]]:
+        df = pd.read_csv(filepath)
+        df = self.preprocessor.transform(df)
+
+        df = df.sort_values(['user_name', 'vid_id', 'vid_scrapeTime'])
+
+        df = df.groupby(['user_name', 'vid_id']).head(3).reset_index(drop=True)
+
+        df['vid_postTime'] = df['vid_postTime'].astype(str)
+        df['vid_scrapeTime'] = df['vid_scrapeTime'].astype(str)
+
+        return df.to_dict(orient='records')
+
+    def send_snapshots(self, records: List[Dict[str, Any]]):
+        print(f"Sending {len(records)} records to Kafka topic '{self.topic}'...")
+        for record in records:
+            self.producer.send(self.topic, value=record)
+            sleep(self.delay)
+        self.producer.flush()
+        print("All records sent.")
+
+    def send_from_csv(self, filepath: str = None):
+        filepath = filepath or DATA_PATHS['streaming_data_path']
+        records = self._load_snapshots_from_csv(filepath)
+        self.send_snapshots(records)
+
+
+if __name__ == "__main__":
+    producer = SnapshotProducer()
+    producer.send_from_csv()
