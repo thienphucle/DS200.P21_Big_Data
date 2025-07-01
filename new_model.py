@@ -1088,16 +1088,7 @@ from tabnet_model import TabNetModel
 from feature_engineering import TikTokFeatureEngineer
 
 def main(args):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data_path', type=str, required=True)
-    parser.add_argument('--output_path', type=str, default='tiktok_predictions.csv')
-    parser.add_argument('--model', type=str, choices=['deep', 'classic', 'tabnet', 'automl'], default='deep')
-    parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--lr', type=float, default=2e-5)
-    parser.add_argument('--save_path', type=str, default='best_tiktok_model.pth')
-    args = parser.parse_args()
-
+    # Load and transform data
     df = pd.read_csv(args.data_path)
     engineer = TikTokFeatureEngineer()
     features = engineer.transform(df)
@@ -1114,68 +1105,55 @@ def main(args):
         batch_size=args.batch_size
     )
 
-    all_results = {}
+    # Train deep learning model
+    print("🔁 Training deep learning model...")
+    baseline_results = trainer.train(
+        train_loader, val_loader, X_train, X_val,
+        y_train_reg, y_val_reg, y_train_cls, y_val_cls,
+        feature_names, epochs=args.epochs, lr=args.lr, save_path=args.save_path
+    )
 
-    if args.model == 'deep':
-        baseline_results = trainer.train(
-            train_loader, val_loader, X_train, X_val,
-            y_train_reg, y_val_reg, y_train_cls, y_val_cls,
-            feature_names, epochs=args.epochs, lr=args.lr
-        )
-        neural_results = trainer.evaluate_and_visualize(
-            val_loader, y_val_reg, y_val_cls, baseline_results,
-            model_path=args.save_path
-        )
-        results_df, attn = trainer.predict(
-            features['training_data'],
-            features['user_trend_features'],
-            features['text_features'],
-            model_path=args.save_path
-        )
-        results_df.to_csv(args.output_path, index=False)
-        print(f"✅ Predictions saved to {args.output_path}")
-        top_kols = recommend_top_kols(results_df)
-        print(top_kols)
-        all_results['neural_net'] = neural_results
-        Visualizer.plot_model_performance_comparison(neural_results['regression'] | {'f1_macro': neural_results['classification']['F1 Macro']}, baseline_results)
-        Visualizer.plot_feature_importance(trainer.baseline_models.feature_importance)
+    neural_results = trainer.evaluate_and_visualize(
+        val_loader, y_val_reg, y_val_cls, baseline_results,
+        model_path=args.save_path
+    )
 
-    if args.model in ['classic', 'deep']:
-        baseline_results = trainer.baseline_models.train_baseline_models(X_train, y_train_reg, y_train_cls, X_val, y_val_reg, y_val_cls, feature_names)
-        print("📊 Baseline model results:")
-        for k, v in baseline_results.items():
-            print(f"{k}: {v}")
-        all_results['baseline'] = baseline_results
+    results_df, attn = trainer.predict(
+        features['training_data'],
+        features['user_trend_features'],
+        features['text_features'],
+        model_path=args.save_path
+    )
+    results_df.to_csv(args.output_path, index=False)
+    print(f"✅ Predictions saved to {args.output_path}")
 
-    if args.model in ['tabnet', 'deep']:
-        if not TabNetModel:
-            print("❌ TabNet not available")
-        else:
-            tabnet = TabNetModel()
-            print("🔧 Training TabNet Regressor...")
-            _, mse = tabnet.fit_regression(X_train, np.mean(y_train_reg, axis=1))
-            print(f"📉 TabNet Regressor MSE: {mse:.4f}")
-            print("🔧 Training TabNet Classifier...")
-            _, acc, f1 = tabnet.fit_classification(X_train, y_train_cls[:, -1])
-            print(f"📈 TabNet Classifier Accuracy: {acc:.4f}, F1 Macro: {f1:.4f}")
-            all_results['tabnet'] = {'reg_mse': mse, 'cls_acc': acc, 'cls_f1': f1}
+    top_kols = recommend_top_kols(results_df)
+    print(top_kols)
 
-    if args.model in ['automl', 'deep']:
-        automl = AutoMLModels()
-        y_train_avg = np.mean(y_train_reg, axis=1)
-        y_cls_eng = y_train_cls[:, -1]
+    # Train TabNet model if available
+    if TABNET_AVAILABLE:
+        print("🔁 Training TabNet models...")
+        tabnet = TabNetModel()
+        tabnet_reg, tabnet_mse = tabnet.fit_regression(X_train, np.mean(y_train_reg, axis=1))
+        tabnet_cls, tabnet_acc, tabnet_f1 = tabnet.fit_classification(X_train, y_train_cls[:, -1])
 
-        if automl.available['flaml']:
-            print("⚙️ Training FLAML (regression)...")
-            flaml_reg = automl.train_flaml(X_train, y_train_avg, task='regression')
-            pred = flaml_reg.predict(X_val)
-            r2 = r2_score(np.mean(y_val_reg, axis=1), pred)
-            print(f"📊 FLAML Regression R2: {r2:.4f}")
-            all_results['flaml'] = {'r2': r2}
+        print(f"✅ TabNet Regression MSE: {tabnet_mse:.4f}")
+        print(f"✅ TabNet Classification Accuracy: {tabnet_acc:.4f}, F1 Macro: {tabnet_f1:.4f}")
 
-    print("\n✅ All training complete. Summary:")
-    for k, v in all_results.items():
-        print(f"{k}: {v}")
+    # Train AutoML models if available
+    automl = AutoMLModels()
+    if automl.available['flaml']:
+        print("🔁 Training AutoML (FLAML) models...")
+        flaml_reg = automl.train_flaml(X_train, np.mean(y_train_reg, axis=1), task='regression', time_budget=30)
+        flaml_cls = automl.train_flaml(X_train, y_train_cls[:, -1], task='classification', time_budget=30)
+
+        y_pred_flaml_reg = flaml_reg.predict(X_val)
+        y_pred_flaml_cls = flaml_cls.predict(X_val)
+
+        print(f"✅ FLAML Regression R2: {r2_score(np.mean(y_val_reg, axis=1), y_pred_flaml_reg):.4f}")
+        print(f"✅ FLAML Classification F1 Macro: {f1_score(y_val_cls[:, -1], y_pred_flaml_cls, average='macro'):.4f}")
+
+    print("✅ All models trained and evaluated.")
 
 
 if __name__ == "__main__":
