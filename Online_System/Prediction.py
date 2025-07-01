@@ -1,33 +1,29 @@
-# streaming.py
-
-from kafka import KafkaConsumer
+from kafka import KafkaConsumer, KafkaProducer
 import json
 import pandas as pd
 import joblib
 from datetime import datetime
 from collections import defaultdict
-from kafka import KafkaProducer
 
-from config import KAFKA_CONFIG, FEATURE_ENGINEERING_CONFIG, MODEL_PATH
-from Online_System import Feature_Engineer
-from Online_System.Feature_Engineer import TikTokFeatureEngineerOnline
+from config import KAFKA_CONFIG, FEATURE_ENGINEERING_CONFIG, MODEL_PATH, DASHBOARD_CONFIG
+from Feature_Engineer import TikTokFeatureEngineerOnline
+
 
 class StreamProcessor:
     def __init__(self):
-        self.topic = KAFKA_CONFIG['video_snapshot_topic'] # Kafka Topic 
-        self.bootstrap_servers = KAFKA_CONFIG['bootstrap_servers'] # Bootstrap server
-        self.snapshot_limit = FEATURE_ENGINEERING_CONFIG['snapshot_limit_per_video'] # Số lượng snapshot 
-        self.window_size = FEATURE_ENGINEERING_CONFIG['rolling_window_size'] # Số video gần nhất để phân tích 
-        self.model = MODEL_PATH['best_model'] # Best model 
+        # Kafka config
+        self.topic = KAFKA_CONFIG['streaming_topic']
+        self.bootstrap_servers = KAFKA_CONFIG['bootstrap_servers']
+        self.predict_topic = DASHBOARD_CONFIG['online_prediction_topic']
 
-        # Bộ nhớ tạm thời
-        self.user_video_history = defaultdict(list)  # {user_name: [video1_dict, video2_dict, ...]}
-        self.video_snapshots = defaultdict(list)     # {vid_id: [snapshot1, snapshot2, ...]}
+        # Feature config
+        self.snapshot_limit = FEATURE_ENGINEERING_CONFIG['snapshot_limit_per_video']
+        self.window_size = FEATURE_ENGINEERING_CONFIG['rolling_window_size']
 
-        # Load model đã train
-        self.model = joblib.load(self.model)
+        # Load pretrained model
+        self.model = joblib.load(MODEL_PATH['best_model'])
 
-        # Khởi tạo Kafka consumer
+        # Kafka consumer
         self.consumer = KafkaConsumer(
             self.topic,
             bootstrap_servers=self.bootstrap_servers,
@@ -37,12 +33,18 @@ class StreamProcessor:
             group_id='video_predictor_group'
         )
 
+        # Kafka producer
         self.producer = KafkaProducer(
             bootstrap_servers=self.bootstrap_servers,
             value_serializer=lambda v: json.dumps(v).encode('utf-8')
         )
 
-        self.fe = TikTokFeatureEngineerOnline(n_recent_videos=self.window_size)
+        # Feature engineer instance
+        self.fe = TikTokFeatureEngineerOnline(n_recent=self.window_size, min_snapshots=self.snapshot_limit)
+
+
+        self.video_snapshots = defaultdict(list)       # {vid_id: [snapshot1, snapshot2, ...]}
+        self.user_video_history = defaultdict(list)    # {user_name: [training_row_dicts]}
 
     def process_snapshot(self, snapshot: dict):
         vid_id = snapshot['vid_id']
@@ -50,56 +52,68 @@ class StreamProcessor:
 
         self.video_snapshots[vid_id].append(snapshot)
 
-        # Nếu đã đủ số lượng snapshot cho một video thì xử lý
-        if len(self.video_snapshots[vid_id]) == self.snapshot_limit:
-            video_df = pd.DataFrame(self.video_snapshots[vid_id])
-            video_df['vid_postTime'] = pd.to_datetime(video_df['vid_postTime'])
-            video_df['vid_scrapeTime'] = pd.to_datetime(video_df['vid_scrapeTime'])
+        if len(self.video_snapshots[vid_id]) < self.snapshot_limit:
+            return  # wait for more snapshots
 
-            # Sort lại để đảm bảo đúng thứ tự snapshot
-            video_df = video_df.sort_values(by="vid_scrapeTime")
+        # Convert to DataFrame
+        df_snapshots = pd.DataFrame(self.video_snapshots[vid_id])
+        df_snapshots['vid_postTime'] = pd.to_datetime(df_snapshots['vid_postTime'])
+        df_snapshots['vid_scrapeTime'] = pd.to_datetime(df_snapshots['vid_scrapeTime'])
 
-            # Trích xuất đặc trưng
-            feature_row = self.fe._extract_video_features(video_df)
+        # Step 1: Preprocess raw data
+        df_preprocessed = self.fe._preprocess_raw_data(df_snapshots)
 
-            # Thêm thông tin lịch sử video của user
-            self.user_video_history[user_name].append(feature_row)
-            if len(self.user_video_history[user_name]) > self.window_size:
-                self.user_video_history[user_name].pop(0)
+        # Step 2: Extract video-level snapshot delta features
+        df_video_features = self.fe._extract_video_level_features(df_preprocessed)
+        if df_video_features.empty:
+            print(f"[WARN] Not enough snapshots for vid_id: {vid_id}")
+            return
 
-            # Trích xuất đặc trưng xu hướng từ lịch sử video
-            df_history = pd.DataFrame(self.user_video_history[user_name])
-            full_feature = self.fe._extract_user_trend_features(df_history)
+        # Step 3: Create inference row (uses first 2 snapshots to predict 3rd)
+        df_inference = self.fe._create_inference_data(df_video_features)
+        if df_inference.empty:
+            print(f"[WARN] Not enough valid snapshots for inference vid_id: {vid_id}")
+            return
 
-            # Gộp với feature video hiện tại
-            final_input = pd.concat([feature_row.reset_index(drop=True), full_feature.reset_index(drop=True)], axis=1)
+        # Step 4: Update user history
+        self.user_video_history[user_name].append(df_inference.iloc[0])
 
-            # Gọi model dự đoán
-            prediction = self.model.predict(final_input)[0]
-            print(f"[PREDICTED] vid_id: {vid_id}, predicted_next_interaction: {prediction:.2f}")
+        if len(self.user_video_history[user_name]) > self.window_size:
+            self.user_video_history[user_name].pop(0)
 
-            # Gửi kết quả sang Kafka topic 'video_predictions'
-            prediction_record = {
-                'vid_id': vid_id,
-                'user_name': user_name,
-                'prediction': round(prediction, 2),
-                'timestamp': datetime.now().isoformat()
-            }
-            self.producer.send('video_predictions', value=prediction_record)
-            self.producer.flush()
+        # Step 5: Create user-level trend features
+        user_history_df = pd.DataFrame(self.user_video_history[user_name])
+        df_user_trend = self.fe._extract_user_trend_features(user_history_df)
 
+        # Step 6: Combine video inference and user trend
+        final_input = pd.concat([df_inference.reset_index(drop=True), df_user_trend.reset_index(drop=True)], axis=1)
 
-            # Xoá snapshot khỏi bộ nhớ tạm
-            del self.video_snapshots[vid_id]
+        # Step 7: Predict
+        prediction = self.model.predict(final_input)[0]
+        print(f"[✅ PREDICTED] vid_id: {vid_id} → predicted_next_engagement: {prediction:.2f}")
+
+        # Step 8: Send to Kafka
+        prediction_message = {
+            'vid_id': vid_id,
+            'user_name': user_name,
+            'prediction': round(prediction, 2),
+            'timestamp': datetime.now().isoformat()
+        }
+
+        self.producer.send(self.predict_topic, value=prediction_message)
+        self.producer.flush()
+
+        # Cleanup memory
+        del self.video_snapshots[vid_id]
 
     def start_stream(self):
-        print(f"Listening to Kafka topic: {self.topic}")
+        print(f"🔄 Listening to Kafka topic: {self.topic}")
         for message in self.consumer:
             snapshot = message.value
             try:
                 self.process_snapshot(snapshot)
             except Exception as e:
-                print(f"[ERROR] Processing snapshot failed: {e}")
+                print(f"[❌ ERROR] Failed to process snapshot: {e}")
 
 
 if __name__ == "__main__":

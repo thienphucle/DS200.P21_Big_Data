@@ -7,10 +7,11 @@ from dateutil import tz
 from pyvi import ViTokenizer
 
 class TikTokPreprocessor:
-    def __init__(self, stopword_path: r"D:\UIT\DS200\DS2000 Project\Offline System\vietnamese-stopwords-dash.txt"):
+    def __init__(self, stopword_path=r"D:\UIT\DS200\DS200_Project\Offline_System\vietnamese-stopwords-dash.txt"):
         self.stopwords = set()
+        self.stopword_path = stopword_path
         if stopword_path:
-            self.load_stopwords(stopword_path)
+            self.load_stopwords(self.stopword_path)
 
     def load_stopwords(self, path: str):
         with open(path, "r", encoding="utf-8") as f:
@@ -66,7 +67,7 @@ class TikTokPreprocessor:
         df_clean['vid_nshare'] = df_clean['vid_nshare'].replace('Share', 0)
 
         # Numeric conversion
-        numeric_cols = ['user_nfollower', 'user_total_like', 'vid_nview', 'vid_nlike',
+        numeric_cols = ['user_nfollower', 'user_total_likes', 'vid_nview', 'vid_nlike',
                         'vid_ncomment', 'vid_nshare', 'vid_nsave', 'music_nused']
         for col in numeric_cols:
             df_clean[col] = df_clean[col].apply(self.convert_units)

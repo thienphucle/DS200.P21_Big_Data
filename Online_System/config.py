@@ -2,7 +2,7 @@
 
 KAFKA_CONFIG = {
     "bootstrap_servers": "localhost:9092",
-    "video_snapshot_topic": "video_snapshots",
+    "streaming_topic": "streaming_data_topic",
     "delay_between_messages": 2,  # seconds
 }
 
@@ -13,10 +13,14 @@ FEATURE_ENGINEERING_CONFIG = {
 }
 
 DATA_PATHS = {
-    "snapshot_csv_path": "snapshots.csv",
-    "output_feature_path": "features_output/"
+    "streaming_data_path": r"D:\UIT\DS200\DS200_Project\Dataset\Preprocessed_Data\streaming_data.csv",
+    "output_feature_path": r"D:\UIT\DS200\DS200_Project\Results"
 }
 
 MODEL_PATH = {
-    "best_model": " ",
+    "best_model": r"D:\UIT\DS200\DS200_Project\Results\Best_Model\tiktok_model.pkl",
+}
+
+DASHBOARD_CONFIG = {
+    "online_prediction_topic" : "online_prediction_topic",
 }
