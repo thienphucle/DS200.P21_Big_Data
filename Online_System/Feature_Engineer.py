@@ -4,6 +4,8 @@ from typing import Dict, List, Tuple, Optional
 import re
 from datetime import datetime, timedelta
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import StandardScaler, RobustScaler
+from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -14,9 +16,9 @@ class TikTokFeatureEngineerOnline:
         self.max_text_features = max_text_features
         self.feature_columns = []
         self.text_vectorizer = None
+        self.scalers = {}
         
     def _parse_count(self, count_str: str) -> float:
-        """Parse count strings like '14.7K', '3.9M', '72K'"""
         if pd.isna(count_str) or count_str == '':
             return 0.0
         
@@ -62,9 +64,10 @@ class TikTokFeatureEngineerOnline:
             self.text_vectorizer = TfidfVectorizer(
                 max_features=self.max_text_features,
                 stop_words='english',
-                ngram_range=(1, 2),
+                ngram_range=(1, 3), 
                 min_df=2,
-                max_df=0.95
+                max_df=0.95,
+                sublinear_tf=True 
             )
             text_features = self.text_vectorizer.fit_transform(text_content).toarray()
         else:
@@ -85,6 +88,17 @@ class TikTokFeatureEngineerOnline:
         df['save_rate'] = df['vid_nsave'] / np.maximum(df['vid_nview'], 1)
         df['engagement_rate'] = df['total_engagement'] / np.maximum(df['vid_nview'], 1)
         
+        # Engagement quality score (weighted by action importance)
+        df['engagement_quality'] = (
+            df['vid_nlike'] * 1.0 + 
+            df['vid_ncomment'] * 3.0 +  # Comments are more valuable
+            df['vid_nshare'] * 5.0 +    # Shares are very valuable
+            df['vid_nsave'] * 4.0       # Saves indicate strong interest
+        ) / np.maximum(df['vid_nview'], 1)
+        
+        # Engagement velocity (engagement per view per hour)
+        df['engagement_velocity'] = df['engagement_rate'] / np.maximum(df['hours_since_post'], 0.1)
+        
         return df
     
     def _extract_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -102,7 +116,9 @@ class TikTokFeatureEngineerOnline:
         else:
             df['hours_since_post'] = (df['vid_scrapeTime'] - df['vid_postTime']).dt.total_seconds() / 3600
         
-        df['hours_since_post'] = np.maximum(df['hours_since_post'], 0.01)  # Avoid zero
+        df['hours_since_post'] = np.maximum(df['hours_since_post'], 0.01)
+
+        df['total_engagement'] = df.get('vid_nlike', 0) + df.get('vid_ncomment', 0) + df.get('vid_nshare', 0) + df.get('vid_nsave', 0)
         
         # Posting time features - use existing if available
         if 'post_hour' not in df.columns:
@@ -117,17 +133,34 @@ class TikTokFeatureEngineerOnline:
         
         df['post_is_weekend'] = df['post_day_of_week'].isin([5, 6]).astype(int)
         
-        # Scraping time features
-        df['scrape_hour'] = df['vid_scrapeTime'].dt.hour
-        df['scrape_day_of_week'] = df['vid_scrapeTime'].dt.dayofweek
+        # Optimal posting time indicators
+        df['is_prime_time'] = df['post_hour'].isin([18, 19, 20, 21]).astype(int)  # 6-9 PM
+        df['is_morning_peak'] = df['post_hour'].isin([7, 8, 9]).astype(int)      # 7-9 AM
+        df['is_lunch_time'] = df['post_hour'].isin([12, 13]).astype(int)         # Lunch hour
         
-        # Growth rates (per hour)
+        # Day type features
+        df['is_friday'] = (df['post_day_of_week'] == 4).astype(int)
+        df['is_monday'] = (df['post_day_of_week'] == 0).astype(int)
+        
+        # Time since posting features (different scales)
+        df['log_hours_since_post'] = np.log1p(df['hours_since_post'])
+        df['sqrt_hours_since_post'] = np.sqrt(df['hours_since_post'])
+        
+        # Growth rates (per hour) with log transformation for stability
         df['view_growth_rate'] = df['vid_nview'] / df['hours_since_post']
         df['like_growth_rate'] = df['vid_nlike'] / df['hours_since_post']
         df['comment_growth_rate'] = df['vid_ncomment'] / df['hours_since_post']
         df['share_growth_rate'] = df['vid_nshare'] / df['hours_since_post']
         df['save_growth_rate'] = df['vid_nsave'] / df['hours_since_post']
         df['engagement_growth_rate'] = df['total_engagement'] / df['hours_since_post']
+        
+        # Log-transformed growth rates for better distribution
+        df['log_view_growth_rate'] = np.log1p(df['view_growth_rate'])
+        df['log_like_growth_rate'] = np.log1p(df['like_growth_rate'])
+        df['log_comment_growth_rate'] = np.log1p(df['comment_growth_rate'])
+        df['log_share_growth_rate'] = np.log1p(df['share_growth_rate'])
+        df['log_save_growth_rate'] = np.log1p(df['save_growth_rate'])
+        df['log_engagement_growth_rate'] = np.log1p(df['engagement_growth_rate'])
         
         return df
     
@@ -162,6 +195,12 @@ class TikTokFeatureEngineerOnline:
         else:
             df['vid_duration_seconds'] = df['vid_duration'].apply(self._parse_duration)
         
+        # Video duration categories and features
+        df['is_short_video'] = (df['vid_duration_seconds'] <= 15).astype(int)
+        df['is_medium_video'] = ((df['vid_duration_seconds'] > 15) & (df['vid_duration_seconds'] <= 60)).astype(int)
+        df['is_long_video'] = (df['vid_duration_seconds'] > 60).astype(int)
+        df['log_duration'] = np.log1p(df['vid_duration_seconds'])
+        
         # Parse music popularity
         if 'music_nused' in df.columns:
             df['music_popularity'] = pd.to_numeric(df['music_nused'], errors='coerce').fillna(0)
@@ -171,6 +210,10 @@ class TikTokFeatureEngineerOnline:
             )
         else:
             df['music_popularity'] = 0
+        
+        # Music popularity features
+        df['log_music_popularity'] = np.log1p(df['music_popularity'])
+        df['is_trending_music'] = (df['music_popularity'] > df['music_popularity'].quantile(0.8)).astype(int)
         
         # Extract hashtags - handle preprocessed format
         if 'vid_hashtags_normalized' in df.columns:
@@ -184,17 +227,37 @@ class TikTokFeatureEngineerOnline:
         else:
             df['num_hashtags'] = df['hashtag_list'].apply(len)
         
+        # Hashtag features
+        df['hashtag_density'] = df['num_hashtags'] / np.maximum(df['vid_duration_seconds'], 1)
+        df['has_many_hashtags'] = (df['num_hashtags'] > 5).astype(int)
+        df['has_few_hashtags'] = (df['num_hashtags'] <= 2).astype(int)
+        
         # Caption features - use cleaned version if available
         caption_col = 'vid_desc_clean' if 'vid_desc_clean' in df.columns else 'vid_caption'
         df['caption_length'] = df[caption_col].fillna('').astype(str).apply(len)
         df['has_caption'] = (df['caption_length'] > 0).astype(int)
         
+        # NEW: Caption features
+        df['log_caption_length'] = np.log1p(df['caption_length'])
+        df['caption_word_count'] = df[caption_col].fillna('').astype(str).apply(lambda x: len(x.split()))
+        df['has_long_caption'] = (df['caption_length'] > 100).astype(int)
+        df['has_short_caption'] = (df['caption_length'] <= 20).astype(int)
+        df['caption_hashtag_ratio'] = df['caption_length'] / np.maximum(df['num_hashtags'], 1)
+        
         # User verification
         df['is_verified'] = df['user_verified'].astype(int) if 'user_verified' in df.columns else 0
         
+        # User features with log transformations
+        df['log_user_nfollower'] = np.log1p(df['user_nfollower'])
+        df['log_user_nfollowing'] = np.log1p(df.get('user_nfollowing', 0))
+        df['follower_following_ratio'] = df['user_nfollower'] / np.maximum(df.get('user_nfollowing', 1), 1)
+        df['is_mega_influencer'] = (df['user_nfollower'] > 1000000).astype(int)
+        df['is_micro_influencer'] = ((df['user_nfollower'] >= 10000) & (df['user_nfollower'] <= 100000)).astype(int)
+        df['is_nano_influencer'] = ((df['user_nfollower'] >= 1000) & (df['user_nfollower'] < 10000)).astype(int)
+        
         # Calculate engagement metrics
-        df = self._calculate_engagement_metrics(df)
         df = self._extract_temporal_features(df)
+        df = self._calculate_engagement_metrics(df)
         
         return df
     
@@ -253,6 +316,32 @@ class TikTokFeatureEngineerOnline:
             save_growth_rate = delta_saves / time_delta
             engagement_growth_rate = delta_engagement / time_delta
             
+            # Acceleration (second derivative)
+            if i > 0:
+                prev_view_growth = (current['vid_nview'] - group.iloc[i-1]['vid_nview']) / np.maximum(
+                    (current['vid_scrapeTime'] - group.iloc[i-1]['vid_scrapeTime']).total_seconds() / 3600, 0.1)
+                view_acceleration = (view_growth_rate - prev_view_growth) / time_delta
+                
+                prev_engagement_growth = (current['total_engagement'] - group.iloc[i-1]['total_engagement']) / np.maximum(
+                    (current['vid_scrapeTime'] - group.iloc[i-1]['vid_scrapeTime']).total_seconds() / 3600, 0.1)
+                engagement_acceleration = (engagement_growth_rate - prev_engagement_growth) / time_delta
+            else:
+                view_acceleration = 0
+                engagement_acceleration = 0
+            
+            # Relative growth (compared to current values)
+            relative_view_growth = delta_views / np.maximum(current['vid_nview'], 1)
+            relative_like_growth = delta_likes / np.maximum(current['vid_nlike'], 1)
+            relative_comment_growth = delta_comments / np.maximum(current['vid_ncomment'], 1)
+            relative_share_growth = delta_shares / np.maximum(current['vid_nshare'], 1)
+            relative_save_growth = delta_saves / np.maximum(current['vid_nsave'], 1)
+            
+            # Engagement mix features
+            engagement_mix_likes = delta_likes / np.maximum(delta_engagement, 1)
+            engagement_mix_comments = delta_comments / np.maximum(delta_engagement, 1)
+            engagement_mix_shares = delta_shares / np.maximum(delta_engagement, 1)
+            engagement_mix_saves = delta_saves / np.maximum(delta_engagement, 1)
+            
             feature_row = {
                 'user_name': current['user_name'],
                 'vid_id': current['vid_id'],
@@ -284,6 +373,27 @@ class TikTokFeatureEngineerOnline:
                 'save_growth_rate': save_growth_rate,
                 'engagement_growth_rate': engagement_growth_rate,
                 
+                # Advanced features
+                'view_acceleration': view_acceleration,
+                'engagement_acceleration': engagement_acceleration,
+                'relative_view_growth': relative_view_growth,
+                'relative_like_growth': relative_like_growth,
+                'relative_comment_growth': relative_comment_growth,
+                'relative_share_growth': relative_share_growth,
+                'relative_save_growth': relative_save_growth,
+                'engagement_mix_likes': engagement_mix_likes,
+                'engagement_mix_comments': engagement_mix_comments,
+                'engagement_mix_shares': engagement_mix_shares,
+                'engagement_mix_saves': engagement_mix_saves,
+                
+                # Log-transformed features for stability
+                'log_view_growth_rate': np.log1p(max(0, view_growth_rate)),
+                'log_like_growth_rate': np.log1p(max(0, like_growth_rate)),
+                'log_comment_growth_rate': np.log1p(max(0, comment_growth_rate)),
+                'log_share_growth_rate': np.log1p(max(0, share_growth_rate)),
+                'log_save_growth_rate': np.log1p(max(0, save_growth_rate)),
+                'log_engagement_growth_rate': np.log1p(max(0, engagement_growth_rate)),
+                
                 # Static features (from first snapshot)
                 'user_nfollower': group.iloc[0]['user_nfollower'],
                 'user_nfollowing': group.iloc[0].get('user_nfollowing', 0),
@@ -298,7 +408,24 @@ class TikTokFeatureEngineerOnline:
                 'post_is_weekend': group.iloc[0]['post_is_weekend'],
                 'vid_caption': group.iloc[0].get('vid_desc_clean', group.iloc[0].get('vid_caption', '')),
                 'vid_hashtag': str(group.iloc[0]['hashtag_list']),
-                'vid_category': group.iloc[0].get('vid_category', 'unknown')
+                'vid_category': group.iloc[0].get('vid_category', 'unknown'),
+                
+                # Additional static features
+                'log_user_nfollower': group.iloc[0]['log_user_nfollower'],
+                'follower_following_ratio': group.iloc[0]['follower_following_ratio'],
+                'is_mega_influencer': group.iloc[0]['is_mega_influencer'],
+                'is_micro_influencer': group.iloc[0]['is_micro_influencer'],
+                'is_nano_influencer': group.iloc[0]['is_nano_influencer'],
+                'is_short_video': group.iloc[0]['is_short_video'],
+                'is_medium_video': group.iloc[0]['is_medium_video'],
+                'is_long_video': group.iloc[0]['is_long_video'],
+                'log_duration': group.iloc[0]['log_duration'],
+                'is_trending_music': group.iloc[0]['is_trending_music'],
+                'hashtag_density': group.iloc[0]['hashtag_density'],
+                'has_many_hashtags': group.iloc[0]['has_many_hashtags'],
+                'has_long_caption': group.iloc[0]['has_long_caption'],
+                'is_prime_time': group.iloc[0]['is_prime_time'],
+                'is_morning_peak': group.iloc[0]['is_morning_peak']
             }
             
             features_list.append(feature_row)
@@ -318,119 +445,172 @@ class TikTokFeatureEngineerOnline:
         
         return pd.concat(all_features, ignore_index=True)
     
+    def safe_get(df, col, default=0.0):
+        return df[col] if col in df.columns else pd.Series([default] * len(df))
+
     def _create_inference_data(self, video_features: pd.DataFrame) -> pd.DataFrame:
         if video_features.empty:
             return pd.DataFrame()
-        
+
         inference_data = []
-        
+
         for (user, vid_id), group in video_features.groupby(['user_name', 'vid_id']):
             group = group.sort_values('snapshot_index').reset_index(drop=True)
-            
-            if len(group) < 3:  # Need at least 3 snapshots to predict 4th
+
+            if len(group) < 3:
                 continue
-            
-            feature_snapshots = group.iloc[:3]
-            latest_snapshot = group.iloc[2]
-            
-            
-                
-           
+
+            feature_snapshots = group.iloc[:2]
+            rolling_data = group.iloc[:3]
+
+            rolling_view_growth = self.safe_get(rolling_data, 'view_growth_rate').rolling(window=2, min_periods=1)
+            rolling_engagement_growth = self.safe_get(rolling_data, 'engagement_growth_rate').rolling(window=2, min_periods=1)
+
+            view_growth_trend = rolling_view_growth.mean().iloc[-1]
+            view_growth_volatility = rolling_view_growth.std().iloc[-1] if len(rolling_data) > 1 else 0
+            engagement_growth_trend = rolling_engagement_growth.mean().iloc[-1]
+            engagement_growth_volatility = rolling_engagement_growth.std().iloc[-1] if len(rolling_data) > 1 else 0
+
+            if len(feature_snapshots) >= 2:
+                recent_view_momentum = self.safe_get(feature_snapshots.iloc[[1]], 'view_growth_rate').values[0] - self.safe_get(feature_snapshots.iloc[[0]], 'view_growth_rate').values[0]
+                recent_engagement_momentum = self.safe_get(feature_snapshots.iloc[[1]], 'engagement_growth_rate').values[0] - self.safe_get(feature_snapshots.iloc[[0]], 'engagement_growth_rate').values[0]
+            else:
+                recent_view_momentum = 0
+                recent_engagement_momentum = 0
+
+            follower_engagement_interaction = self.safe_get(feature_snapshots.iloc[[0]], 'user_nfollower').values[0] * self.safe_get(feature_snapshots, 'engagement_growth_rate').mean()
+            duration_engagement_interaction = self.safe_get(feature_snapshots.iloc[[0]], 'vid_duration_seconds').values[0] * self.safe_get(feature_snapshots, 'engagement_growth_rate').mean()
+            hashtag_engagement_interaction = self.safe_get(feature_snapshots.iloc[[0]], 'num_hashtags').values[0] * self.safe_get(feature_snapshots, 'engagement_growth_rate').mean()
+
+            followers = max(self.safe_get(feature_snapshots.iloc[[0]], 'user_nfollower').values[0], 1)
+            normalized_views = self.safe_get(feature_snapshots.iloc[[-1]], 'current_views').values[0] / followers
+            normalized_engagement = self.safe_get(feature_snapshots.iloc[[-1]], 'current_engagement').values[0] / followers
+
             feature_row = {
                 'user_name': user,
                 'vid_id': vid_id,
-                    
-                # User features
-                'user_nfollower': feature_snapshots.iloc[0]['user_nfollower'],
-                'user_nfollowing': feature_snapshots.iloc[0]['user_nfollowing'],
-                'is_verified': feature_snapshots.iloc[0]['is_verified'],
-                    
-                # Video content features
-                'vid_duration_seconds': feature_snapshots.iloc[0]['vid_duration_seconds'],
-                'music_popularity': feature_snapshots.iloc[0]['music_popularity'],
-                'num_hashtags': feature_snapshots.iloc[0]['num_hashtags'],
-                'caption_length': feature_snapshots.iloc[0]['caption_length'],
-                'has_caption': feature_snapshots.iloc[0]['has_caption'],
-                'post_hour': feature_snapshots.iloc[0]['post_hour'],
-                'post_day_of_week': feature_snapshots.iloc[0]['post_day_of_week'],
-                'post_is_weekend': feature_snapshots.iloc[0]['post_is_weekend'],
-                    
-                # Text features
-                'vid_caption': feature_snapshots.iloc[0]['vid_caption'],
-                'vid_hashtag': feature_snapshots.iloc[0]['vid_hashtag'],
-                'vid_category': feature_snapshots.iloc[0]['vid_category'],
-                    
-                # Time series features (aggregated from first 2 snapshots)
-                'avg_view_growth_rate': feature_snapshots['view_growth_rate'].mean(),
-                'avg_like_growth_rate': feature_snapshots['like_growth_rate'].mean(),
-                'avg_comment_growth_rate': feature_snapshots['comment_growth_rate'].mean(),
-                'avg_share_growth_rate': feature_snapshots['share_growth_rate'].mean(),
-                'avg_save_growth_rate': feature_snapshots['save_growth_rate'].mean(),
-                'avg_engagement_growth_rate': feature_snapshots['engagement_growth_rate'].mean(),
-                    
-                'std_view_growth_rate': feature_snapshots['view_growth_rate'].std(),
-                'std_like_growth_rate': feature_snapshots['like_growth_rate'].std(),
-                'std_comment_growth_rate': feature_snapshots['comment_growth_rate'].std(),
-                'std_share_growth_rate': feature_snapshots['share_growth_rate'].std(),
-                'std_save_growth_rate': feature_snapshots['save_growth_rate'].std(),
-                'std_engagement_growth_rate': feature_snapshots['engagement_growth_rate'].std(),
-                    
-                # Latest snapshot values
-                'latest_views': latest_snapshot['current_views'],
-                'latest_likes': latest_snapshot['current_likes'],
-                'latest_comments': latest_snapshot['current_comments'],
-                'latest_shares': latest_snapshot['current_shares'],
-                'latest_saves': latest_snapshot['current_saves'],
-                'latest_hours_since_post': latest_snapshot['current_hours_since_post'],
-                    
+                'user_nfollower': self.safe_get(feature_snapshots.iloc[[0]], 'user_nfollower').values[0],
+                'user_nfollowing': self.safe_get(feature_snapshots.iloc[[0]], 'user_nfollowing').values[0],
+                'is_verified': self.safe_get(feature_snapshots.iloc[[0]], 'is_verified').values[0],
+                'log_user_nfollower': self.safe_get(feature_snapshots.iloc[[0]], 'log_user_nfollower').values[0],
+                'follower_following_ratio': self.safe_get(feature_snapshots.iloc[[0]], 'follower_following_ratio').values[0],
+                'is_mega_influencer': self.safe_get(feature_snapshots.iloc[[0]], 'is_mega_influencer').values[0],
+                'is_micro_influencer': self.safe_get(feature_snapshots.iloc[[0]], 'is_micro_influencer').values[0],
+                'is_nano_influencer': self.safe_get(feature_snapshots.iloc[[0]], 'is_nano_influencer').values[0],
+                'vid_duration_seconds':self.safe_get(feature_snapshots.iloc[[0]], 'vid_duration_seconds').values[0],
+                'log_duration': self.safe_get( feature_snapshots.iloc[[0]], 'log_duration').values[0],
+                'is_short_video': self.safe_get(feature_snapshots.iloc[[0]], 'is_short_video').values[0],
+                'is_medium_video': self.safe_get(feature_snapshots.iloc[[0]], 'is_medium_video').values[0],
+                'is_long_video': self.safe_get(feature_snapshots.iloc[[0]], 'is_long_video').values[0],
+                'music_popularity': self.safe_get(feature_snapshots.iloc[[0]], 'music_popularity').values[0],
+                'is_trending_music': self.safe_get(feature_snapshots.iloc[[0]], 'is_trending_music').values[0],
+                'num_hashtags': self.safe_get(feature_snapshots.iloc[[0]], 'num_hashtags').values[0],
+                'hashtag_density': self.safe_get(feature_snapshots.iloc[[0]], 'hashtag_density').values[0],
+                'has_many_hashtags': self.safe_get(feature_snapshots.iloc[[0]], 'has_many_hashtags').values[0],
+                'caption_length': self.safe_get(feature_snapshots.iloc[[0]], 'caption_length').values[0],
+                'has_caption': self.safe_get(feature_snapshots.iloc[[0]], 'has_caption').values[0],
+                'has_long_caption': self.safe_get(feature_snapshots.iloc[[0]], 'has_long_caption').values[0],
+                'post_hour': self.safe_get(feature_snapshots.iloc[[0]], 'post_hour').values[0],
+                'post_day_of_week': self.safe_get(feature_snapshots.iloc[[0]], 'post_day_of_week').values[0],
+                'post_is_weekend': self.safe_get(feature_snapshots.iloc[[0]], 'post_is_weekend').values[0],
+                'is_prime_time': self.safe_get(feature_snapshots.iloc[[0]], 'is_prime_time').values[0],
+                'is_morning_peak': self.safe_get(feature_snapshots.iloc[[0]], 'is_morning_peak').values[0],
+                'vid_caption': self.safe_get(feature_snapshots.iloc[[0]], 'vid_caption').values[0],
+                'vid_hashtag': self.safe_get(feature_snapshots.iloc[[0]], 'vid_hashtag').values[0],
+                'vid_category': self.safe_get(feature_snapshots.iloc[[0]], 'vid_category').values[0],
+                'avg_view_growth_rate': self.safe_get(feature_snapshots, 'view_growth_rate').mean(),
+                'avg_like_growth_rate': self.safe_get(feature_snapshots, 'like_growth_rate').mean(),
+                'avg_comment_growth_rate': self.safe_get(feature_snapshots, 'comment_growth_rate').mean(),
+                'avg_share_growth_rate': self.safe_get(feature_snapshots, 'share_growth_rate').mean(),
+                'avg_save_growth_rate': self.safe_get(feature_snapshots, 'save_growth_rate').mean(),
+                'avg_engagement_growth_rate': self.safe_get(feature_snapshots, 'engagement_growth_rate').mean(),
+                'std_view_growth_rate': self.safe_get(feature_snapshots, 'view_growth_rate').std(),
+                'std_like_growth_rate': self.safe_get(feature_snapshots, 'like_growth_rate').std(),
+                'std_comment_growth_rate': self.safe_get(feature_snapshots, 'comment_growth_rate').std(),
+                'std_share_growth_rate': self.safe_get(feature_snapshots, 'share_growth_rate').std(),
+                'std_save_growth_rate': self.safe_get(feature_snapshots, 'save_growth_rate').std(),
+                'std_engagement_growth_rate': self.safe_get(feature_snapshots, 'engagement_growth_rate').std(),
+                'max_view_growth_rate': self.safe_get(feature_snapshots, 'view_growth_rate').max(),
+                'min_view_growth_rate': self.safe_get(feature_snapshots, 'view_growth_rate').min(),
+                'max_engagement_growth_rate': self.safe_get(feature_snapshots, 'engagement_growth_rate').max(),
+                'min_engagement_growth_rate': self.safe_get(feature_snapshots, 'engagement_growth_rate').min(),
+                'view_growth_trend': view_growth_trend,
+                'view_growth_volatility': view_growth_volatility,
+                'engagement_growth_trend': engagement_growth_trend,
+                'engagement_growth_volatility': engagement_growth_volatility,
+                'recent_view_momentum': recent_view_momentum,
+                'recent_engagement_momentum': recent_engagement_momentum,
+                'follower_engagement_interaction': follower_engagement_interaction,
+                'duration_engagement_interaction': duration_engagement_interaction,
+                'hashtag_engagement_interaction': hashtag_engagement_interaction,
+                'normalized_views': normalized_views,
+                'normalized_engagement': normalized_engagement,
+                'avg_view_acceleration': self.safe_get(feature_snapshots, 'view_acceleration').mean(),
+                'avg_engagement_acceleration': self.safe_get(feature_snapshots, 'engagement_acceleration').mean(),
+                'avg_relative_view_growth': self.safe_get(feature_snapshots, 'relative_view_growth').mean(),
+                'avg_relative_like_growth': self.safe_get(feature_snapshots, 'relative_like_growth').mean(),
+                'avg_relative_comment_growth': self.safe_get(feature_snapshots, 'relative_comment_growth').mean(),
+                'avg_relative_share_growth': self.safe_get(feature_snapshots, 'relative_share_growth').mean(),
+                'avg_relative_save_growth': self.safe_get(feature_snapshots, 'relative_save_growth').mean(),
+                'avg_engagement_mix_likes': self.safe_get(feature_snapshots, 'engagement_mix_likes').mean(),
+                'avg_engagement_mix_comments': self.safe_get(feature_snapshots, 'engagement_mix_comments').mean(),
+                'avg_engagement_mix_shares': self.safe_get(feature_snapshots, 'engagement_mix_shares').mean(),
+                'avg_engagement_mix_saves': self.safe_get(feature_snapshots, 'engagement_mix_saves').mean(),
+                'latest_views': self.safe_get(feature_snapshots.iloc[[-1]], 'current_views').values[0],
+                'latest_likes': self.safe_get(feature_snapshots.iloc[[-1]], 'current_likes').values[0],
+                'latest_comments': self.safe_get(feature_snapshots.iloc[[-1]], 'current_comments').values[0],
+                'latest_shares': self.safe_get(feature_snapshots.iloc[[-1]], 'current_shares').values[0],
+                'latest_saves': self.safe_get(feature_snapshots.iloc[[-1]], 'current_saves').values[0],
+                'latest_hours_since_post': self.safe_get(feature_snapshots.iloc[[-1]], 'current_hours_since_post').values[0],
             }
-                
+
             inference_data.append(feature_row)
-        
+
         return pd.DataFrame(inference_data)
-    
-    def _classify_growth(self, growth_rate: float, 
-                        increase_threshold: float = 10.0, 
-                        decrease_threshold: float = -5.0) -> str:
-        """Classify growth rate into categories: increase/stable/decrease"""
-        if pd.isna(growth_rate):
-            return 'stable'
-        
-        if growth_rate > increase_threshold:
-            return 'increase'
-        elif growth_rate < decrease_threshold:
-            return 'decrease'
-        else:
-            return 'stable'
-    
+
     def _extract_user_trend_features(self, inference_data: pd.DataFrame) -> pd.DataFrame:
         if inference_data.empty:
             return pd.DataFrame()
-        
+
         user_features = []
-        
+
         for user, group in inference_data.groupby('user_name'):
-            # Sort by latest activity
             group = group.sort_values('latest_hours_since_post', ascending=False).head(self.n_recent)
-            
             if len(group) == 0:
                 continue
-            
+
+            # Precompute stats to avoid repetition
+            caption_mean = group['caption_length'].mean()
+            duration_mean = group['vid_duration_seconds'].mean()
+            engagement_quality = group['engagement_quality'] if 'engagement_quality' in group.columns else group['avg_engagement_growth_rate']
+            engagement_velocity = group['engagement_velocity'] if 'engagement_velocity' in group.columns else group['avg_engagement_growth_rate'] / group['latest_hours_since_post']
+
             user_stats = {
                 'user_name': user,
                 'num_videos': len(group),
-                
+
                 # User profile features
                 'avg_follower_count': group['user_nfollower'].mean(),
                 'avg_following_count': group['user_nfollowing'].mean(),
                 'verification_rate': group['is_verified'].mean(),
-                
+                'avg_follower_following_ratio': group['follower_following_ratio'].mean(),
+                'influencer_tier_score': (
+                    group['is_mega_influencer'].mean() * 4 +
+                    group['is_micro_influencer'].mean() * 2 +
+                    group['is_nano_influencer'].mean() * 1
+                ),
+
                 # Content features
-                'avg_video_duration': group['vid_duration_seconds'].mean(),
+                'avg_video_duration': duration_mean,
+                'std_video_duration': group['vid_duration_seconds'].std(),
+                'short_video_rate': group['is_short_video'].mean(),
+                'long_video_rate': group['is_long_video'].mean(),
                 'avg_hashtag_count': group['num_hashtags'].mean(),
-                'avg_caption_length': group['caption_length'].mean(),
+                'avg_caption_length': caption_mean,
                 'caption_usage_rate': group['has_caption'].mean(),
-                
+                'long_caption_rate': group['has_long_caption'].mean(),
+                'trending_music_rate': group['is_trending_music'].mean(),
+
                 # Performance trends
                 'avg_view_growth': group['avg_view_growth_rate'].mean(),
                 'avg_like_growth': group['avg_like_growth_rate'].mean(),
@@ -438,31 +618,66 @@ class TikTokFeatureEngineerOnline:
                 'avg_share_growth': group['avg_share_growth_rate'].mean(),
                 'avg_save_growth': group['avg_save_growth_rate'].mean(),
                 'avg_engagement_growth': group['avg_engagement_growth_rate'].mean(),
-                
+
+                # Performance variability
+                'std_view_growth': group['avg_view_growth_rate'].std(),
+                'std_like_growth': group['avg_like_growth_rate'].std(),
+                'std_engagement_growth': group['avg_engagement_growth_rate'].std(),
+
                 # Consistency metrics
                 'view_growth_consistency': 1 / (1 + group['std_view_growth_rate'].mean()),
                 'like_growth_consistency': 1 / (1 + group['std_like_growth_rate'].mean()),
                 'engagement_growth_consistency': 1 / (1 + group['std_engagement_growth_rate'].mean()),
-                
-                
+
+                # Performance percentiles
+                'view_growth_75th': group['avg_view_growth_rate'].quantile(0.75),
+                'view_growth_25th': group['avg_view_growth_rate'].quantile(0.25),
+                'engagement_growth_75th': group['avg_engagement_growth_rate'].quantile(0.75),
+                'engagement_growth_25th': group['avg_engagement_growth_rate'].quantile(0.25),
+
+
                 # Posting patterns
                 'avg_post_hour': group['post_hour'].mean(),
                 'weekend_posting_rate': group['post_is_weekend'].mean(),
-                
+                'prime_time_posting_rate': group['is_prime_time'].mean(),
+                'morning_peak_posting_rate': group['is_morning_peak'].mean(),
+                'posting_hour_diversity': group['post_hour'].nunique(),
+
                 # Recent performance
                 'recent_avg_views': group['latest_views'].mean(),
-                'recent_avg_engagement': (group['latest_likes'] + group['latest_comments'] + 
-                                        group['latest_shares'] + group['latest_saves']).mean()
+                'recent_avg_engagement': (
+                    group['latest_likes'] + group['latest_comments'] +
+                    group['latest_shares'] + group['latest_saves']
+                ).mean(),
+                'recent_max_views': group['latest_views'].max(),
+                'recent_max_engagement': (
+                    group['latest_likes'] + group['latest_comments'] +
+                    group['latest_shares'] + group['latest_saves']
+                ).max(),
+
+                # Advanced behavior
+                'normalized_avg_views': group['normalized_views'].mean(),
+                'normalized_avg_engagement': group['normalized_engagement'].mean(),
+                'avg_momentum_view': group['recent_view_momentum'].mean(),
+                'avg_momentum_engagement': group['recent_engagement_momentum'].mean(),
+
+                # Content strategy
+                'hashtag_strategy_score': group['hashtag_density'].mean(),
+                'content_length_strategy': duration_mean / caption_mean if caption_mean > 0 else 0,
+
+                # Engagement quality
+                'avg_engagement_quality': engagement_quality.mean(),
+                'engagement_velocity': engagement_velocity.mean(),
             }
-            
+
             user_features.append(user_stats)
-        
+
         return pd.DataFrame(user_features)
-    
+
     def transform(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         processed_df = self._preprocess_raw_data(df)
         video_features = self._extract_video_level_features(processed_df)
-        
+    
         if video_features.empty:
             print("Warning: No video features extracted!")
             return {
@@ -472,8 +687,19 @@ class TikTokFeatureEngineerOnline:
                 'text_features': np.array([]),
                 'text_vectorizer': None
             }
-        
+
         inference_data = self._create_inference_data(video_features)
+
+        if inference_data.empty:
+            print("Warning: Inference data is empty after snapshot processing!")
+            return {
+                'inference_data': pd.DataFrame(),
+                'user_trend_features': pd.DataFrame(),
+                'video_features': video_features,
+                'text_features': np.array([]),
+                'text_vectorizer': None
+            }
+
         user_trend_features = self._extract_user_trend_features(inference_data)
         text_features = self._prepare_text_features(inference_data)
 
