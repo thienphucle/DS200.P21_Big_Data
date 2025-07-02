@@ -8,7 +8,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 class TikTokFeatureEngineerOnline:
-    def __init__(self, n_recent_videos: int = 20, min_snapshots: int = 4, max_text_features: int = 512):
+    def __init__(self, n_recent_videos: int = 20, min_snapshots: int = 3, max_text_features: int = 512):
         self.n_recent = n_recent_videos
         self.min_snapshots = min_snapshots
         self.max_text_features = max_text_features
@@ -335,7 +335,7 @@ class TikTokFeatureEngineerOnline:
             
             
                 
-            # Aggregate features from first 2 snapshots
+           
             feature_row = {
                 'user_name': user,
                 'vid_id': vid_id,
@@ -444,15 +444,6 @@ class TikTokFeatureEngineerOnline:
                 'like_growth_consistency': 1 / (1 + group['std_like_growth_rate'].mean()),
                 'engagement_growth_consistency': 1 / (1 + group['std_engagement_growth_rate'].mean()),
                 
-                # Success rate (percentage of videos with positive growth)
-                'view_success_rate': (group['target_view_growth_rate'] > 0).mean(),
-                'like_success_rate': (group['target_like_growth_rate'] > 0).mean(),
-                'engagement_success_rate': (group['target_engagement_growth_rate'] > 0).mean(),
-                
-                # Growth class distribution
-                'increase_rate': (group['engagement_growth_class'] == 'increase').mean(),
-                'stable_rate': (group['engagement_growth_class'] == 'stable').mean(),
-                'decrease_rate': (group['engagement_growth_class'] == 'decrease').mean(),
                 
                 # Posting patterns
                 'avg_post_hour': group['post_hour'].mean(),

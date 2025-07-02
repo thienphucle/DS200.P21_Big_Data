@@ -33,7 +33,7 @@ async def get_duration_from_video(context, video_url):
     return duration
 
 async def fill_missing_durations():
-    df = pd.read_csv(r"D:\UIT\DS200\DS2000 Project\Raw Data\Merged Data\streaming_data.csv")
+    df = pd.read_csv(r"D:\UIT\DS200\DS200_Project\Dataset\Raw_Data\Merged_Data\streaming_data.csv")
     missing_df = df[df["vid_duration"].isna() | (df["vid_duration"].astype(str).str.strip() == "")]
 
     if missing_df.empty:
@@ -61,7 +61,7 @@ async def fill_missing_durations():
 
         await browser.close()
 
-    df.to_csv(r"D:\UIT\DS200\DS2000 Project\Preprocessed Data\streaming_data.csv", index=False, encoding="utf-8-sig")
+    df.to_csv(r"D:\UIT\DS200\DS200_Project\Dataset\Raw_Data\Merged_Data\streaming_data.csv", index=False, encoding="utf-8-sig")
     print("Missing durations filled and saved.csv'.")
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ from config import KAFKA_CONFIG, DATA_PATHS
 from Preprocessor import TikTokPreprocessor
 
 
-class SnapshotProducer:
+class TikTokProducer:
     def __init__(self):
         self.topic = KAFKA_CONFIG['streaming_topic']
         self.bootstrap_servers = KAFKA_CONFIG['bootstrap_servers']
@@ -32,8 +32,10 @@ class SnapshotProducer:
 
         df = df.groupby(['user_name', 'vid_id']).head(3).reset_index(drop=True)
 
-        df['vid_postTime'] = df['vid_postTime'].astype(str)
-        df['vid_scrapeTime'] = df['vid_scrapeTime'].astype(str)
+        # df['vid_postTime'] = df['vid_postTime'].astype(str)
+        # df['vid_scrapeTime'] = df['vid_scrapeTime'].astype(str)
+        df['vid_scrapeTime'] = pd.to_datetime(df['vid_scrapeTime']).dt.strftime('%Y-%m-%dT%H:%M:%S')
+        df['vid_postTime']  = pd.to_datetime(df['vid_postTime'] ).dt.strftime('%Y-%m-%dT%H:%M:%S')
 
         return df.to_dict(orient='records')
 
@@ -52,5 +54,5 @@ class SnapshotProducer:
 
 
 if __name__ == "__main__":
-    producer = SnapshotProducer()
+    producer = TikTokProducer()
     producer.send_from_csv()

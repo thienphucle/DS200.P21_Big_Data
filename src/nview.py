@@ -39,7 +39,7 @@ async def get_video_views(context, username, target_video_id, max_scroll=MAX_SCR
     return ""
 
 async def main():
-    df = pd.read_csv(r"D:\UIT\DS200\DS2000 Project\Preprocessed Data\streaming_data.csv")
+    df = pd.read_csv(r"D:\UIT\DS200\DS200_Project\Dataset\Raw_Data\Merged_Data\streaming_data.csv")
     failed_rows = []
     updated_count = 0
 
@@ -83,7 +83,7 @@ async def main():
         await browser.close()
 
     # Final save
-    df.to_csv(r"D:\UIT\DS200\DS2000 Project\Preprocessed Data\streaming_data.csv", index=False, encoding="utf-8-sig")
+    df.to_csv(r"D:\UIT\DS200\DS200_Project\Dataset\Raw_Data\Merged_Data\streaming_data.csv", index=False, encoding="utf-8-sig")
     print(f"\nDone. Saved all data to videoss.csv")
 
     if failed_rows:
