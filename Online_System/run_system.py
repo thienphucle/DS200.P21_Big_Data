@@ -24,11 +24,11 @@ if __name__ == "__main__":
     p4 = Process(target=run_dashboard)
 
     p1.start()
-    time.sleep(1)  # Cho Producer chạy trước
+    time.sleep(2)  # Cho Producer chạy trước
     p2.start()
-    time.sleep(1)
+    time.sleep(3)
     p3.start()
-    time.sleep(1)
+    time.sleep(3)
     p4.start()
 
     p1.join()

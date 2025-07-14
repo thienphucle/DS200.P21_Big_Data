@@ -3,11 +3,11 @@
 KAFKA_CONFIG = {
     "bootstrap_servers": "localhost:9092",
     "streaming_topic": "streaming_data_topic",
-    "delay_between_messages": 2,  
+    "delay_between_messages": 1,
 }
 
 FEATURE_ENGINEERING_CONFIG = {
-    "rolling_window_size": 20,  
+    "rolling_window_size": 5,  
     "snapshot_limit_per_video": 3,
     "max_caption_length": 256
 }
@@ -18,7 +18,7 @@ DATA_PATHS = {
 }
 
 MODEL_PATH = {
-    "best_model": r"D:\UIT\DS200\DS200_Project\ModelResults\tiktok_model.pth",
+    "best_model": r"D:\UIT\DS200\DS200_Project\ModelResults\enhanced_tiktok_model.pth",
 }
 
 DASHBOARD_CONFIG = {

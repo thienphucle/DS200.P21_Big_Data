@@ -3,9 +3,8 @@ import pandas as pd
 import json
 from time import sleep
 from typing import List, Dict, Any
-
+from datetime import datetime
 from config import KAFKA_CONFIG, DATA_PATHS
-from Preprocessor import TikTokPreprocessor
 
 
 class TikTokProducer:
@@ -19,31 +18,30 @@ class TikTokProducer:
             value_serializer=self._json_serializer
         )
 
-        self.preprocessor = TikTokPreprocessor()
-
+    # chuyển data thành dạng json 
     def _json_serializer(self, data: Dict[str, Any]) -> bytes:
         return json.dumps(data, default=str).encode('utf-8')
 
     def _load_snapshots_from_csv(self, filepath: str) -> List[Dict[str, Any]]:
         df = pd.read_csv(filepath)
-        df = self.preprocessor.transform(df)
 
         df = df.sort_values(['user_name', 'vid_id', 'vid_scrapeTime'])
 
         df = df.groupby(['user_name', 'vid_id']).head(3).reset_index(drop=True)
 
-        # df['vid_postTime'] = df['vid_postTime'].astype(str)
-        # df['vid_scrapeTime'] = df['vid_scrapeTime'].astype(str)
-        df['vid_scrapeTime'] = pd.to_datetime(df['vid_scrapeTime']).dt.strftime('%Y-%m-%dT%H:%M:%S')
-        df['vid_postTime']  = pd.to_datetime(df['vid_postTime'] ).dt.strftime('%Y-%m-%dT%H:%M:%S')
-
+        # Kafka không thể gửi dữ liệu trực tiếp với dữ liệu datetime, .. --> cần chuyển về dạng iso 
         return df.to_dict(orient='records')
 
     def send_snapshots(self, records: List[Dict[str, Any]]):
         print(f"Sending {len(records)} records to Kafka topic '{self.topic}'...")
+        
+        # Gửi từng bản ghi 1 cách tuần tự và chậm rãi
         for record in records:
+            print(f"====[PRODUCER] - Send record:\n {record}")
             self.producer.send(self.topic, value=record)
             sleep(self.delay)
+
+        # Đảm bảo toàn bộ dữ liệu được gửi
         self.producer.flush()
         print("All records sent.")
 
@@ -52,7 +50,40 @@ class TikTokProducer:
         records = self._load_snapshots_from_csv(filepath)
         self.send_snapshots(records)
 
+    def send_snapshots_grouped(self, filepath: str = None):
+        filepath = filepath or DATA_PATHS['streaming_data_path']
+        df = pd.read_csv(filepath)
+    
+        # Sắp xếp snapshot theo thời gian
+        df = df.sort_values(['user_name', 'vid_id', 'vid_scrapeTime'])
+
+        # Chỉ giữ 3 snapshot đầu tiên mỗi video
+        grouped = df.groupby(['user_name', 'vid_id']).head(3).reset_index(drop=True)
+
+        # Gộp theo video
+        video_groups = grouped.groupby(['user_name', 'vid_id'])
+
+        count = 0
+        for (user, vid), group in video_groups:
+            records = group.to_dict(orient="records")
+
+            if len(records) < 3:
+                continue  # Bỏ qua video chưa đủ 3 snapshot
+
+            for record in records:
+                print(f"====[PRODUCER] - Send record for vid_id={vid} ====")
+                self.producer.send(self.topic, value=record)
+                sleep(self.delay)
+
+            count += 1
+
+        self.producer.flush()
+        print(f"✅ Sent {count} videos with ≥3 snapshots to Kafka.")
+
 
 if __name__ == "__main__":
     producer = TikTokProducer()
-    producer.send_from_csv()
+    print("STARTING STREAMING DATA TO INPUT KAFKA TOPIC")
+    # producer.send_from_csv()
+    producer.send_snapshots_grouped()
+

@@ -4,7 +4,7 @@ import pymongo
 import time
 
 
-class DashboardMongoApp:
+class Dashboard:
     def __init__(self, mongo_uri="mongodb://localhost:27017", db_name="TikTokPrediction", collection="predictions"):
         self.client = pymongo.MongoClient(mongo_uri)
         self.collection = self.client[db_name][collection]
@@ -21,7 +21,7 @@ class DashboardMongoApp:
                 if cursor:
                     df = pd.DataFrame(cursor)
                     df["timestamp"] = pd.to_datetime(df["timestamp"])
-                    df = df[["timestamp", "user_name", "vid_id", "prediction"]]
+                    df = df[[ "user_name", "vid_id", "timestamp", "prediction", "confidence"]]
 
                     self.history_df = pd.concat([df, self.history_df]).drop_duplicates().head(100)
 
@@ -33,3 +33,9 @@ class DashboardMongoApp:
                 st.warning(f"⚠ MongoDB read error: {e}")
 
             time.sleep(3)
+
+if __name__ == "__main__":
+
+    processor = Dashboard()
+    print("STARTING READING DATA & PRINTING DATA  ON DASHBOARD")
+    processor.run()

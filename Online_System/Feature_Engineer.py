@@ -17,7 +17,8 @@ class TikTokFeatureEngineerOnline:
         self.feature_columns = []
         self.text_vectorizer = None
         self.scalers = {}
-        
+
+    # Chuẩn hóa số liệu K, M, B về số   
     def _parse_count(self, count_str: str) -> float:
         if pd.isna(count_str) or count_str == '':
             return 0.0
@@ -36,6 +37,7 @@ class TikTokFeatureEngineerOnline:
         except (ValueError, TypeError):
             return 0.0
     
+    # Chuẩn hóa hashtag thành list 
     def _extract_hashtags(self, hashtag_str) -> List[str]:
         if pd.isna(hashtag_str) or hashtag_str == '':
             return []
@@ -47,6 +49,7 @@ class TikTokFeatureEngineerOnline:
         hashtags = [tag.strip() for tag in hashtag_str.split(',')]
         return [tag for tag in hashtags if tag and not tag.isspace()]
     
+    # Chuẩn hóa text = caption + hashtag + category --> trích xuất đặc trưng text 
     def _prepare_text_features(self, df: pd.DataFrame) -> np.ndarray:
         text_content = []
         for idx in range(len(df)):
@@ -75,6 +78,7 @@ class TikTokFeatureEngineerOnline:
         
         return text_features
     
+    # Tính các số liệu liên quan đến engagement 
     def _calculate_engagement_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
@@ -101,6 +105,7 @@ class TikTokFeatureEngineerOnline:
         
         return df
     
+    
     def _extract_temporal_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
@@ -116,6 +121,7 @@ class TikTokFeatureEngineerOnline:
         else:
             df['hours_since_post'] = (df['vid_scrapeTime'] - df['vid_postTime']).dt.total_seconds() / 3600
         
+        # Đảm bảo hours_since_post khác 0 
         df['hours_since_post'] = np.maximum(df['hours_since_post'], 0.01)
 
         df['total_engagement'] = df.get('vid_nlike', 0) + df.get('vid_ncomment', 0) + df.get('vid_nshare', 0) + df.get('vid_nsave', 0)
@@ -164,10 +170,11 @@ class TikTokFeatureEngineerOnline:
         
         return df
     
+    # Xử lý giá trị các cột 
     def _preprocess_raw_data(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         
-        # Handle different column naming conventions
+        # Chuẩn hóa tên cột. 
         column_mapping = {
             'user_name': ['user_name', 'username'],
             'vid_id': ['vid_id', 'video_id'],
@@ -261,6 +268,7 @@ class TikTokFeatureEngineerOnline:
         
         return df
     
+    # Chuẩn hóa video_duration 
     def _parse_duration(self, duration_str: str) -> float:
         if pd.isna(duration_str) or duration_str == '' or duration_str == '00:00':
             return 0.0
@@ -279,6 +287,7 @@ class TikTokFeatureEngineerOnline:
         except (ValueError, TypeError):
             return 0.0
     
+    # Tính delta- tăng trưởng tương tác giữa các snapshot trong mỗi group 
     def _calculate_snapshot_deltas(self, group: pd.DataFrame) -> pd.DataFrame:
         """Calculate deltas between consecutive snapshots for a single video"""
         group = group.sort_values('vid_scrapeTime').reset_index(drop=True)
@@ -288,7 +297,7 @@ class TikTokFeatureEngineerOnline:
         
         features_list = []
         
-        for i in range(len(group) - 1):
+        for i in range(len(group) - 1): 
             if i + 1 >= len(group):
                 break
                 
@@ -308,7 +317,7 @@ class TikTokFeatureEngineerOnline:
             delta_saves = next_snapshot['vid_nsave'] - current['vid_nsave']
             delta_engagement = next_snapshot['total_engagement'] - current['total_engagement']
             
-            # Growth rates (per hour)
+            # Growth rates (per hour): tốc độ tăng trưởng tương tác theo giờ của snapshot tiếp theo so với  snapshot hiện tại 
             view_growth_rate = delta_views / time_delta
             like_growth_rate = delta_likes / time_delta
             comment_growth_rate = delta_comments / time_delta
@@ -316,7 +325,7 @@ class TikTokFeatureEngineerOnline:
             save_growth_rate = delta_saves / time_delta
             engagement_growth_rate = delta_engagement / time_delta
             
-            # Acceleration (second derivative)
+            # Acceleration (second derivative): Tính gia tốc thay đổi lượt view và engagement giữa snapshot hiện tại so với snapshot trước đó 
             if i > 0:
                 prev_view_growth = (current['vid_nview'] - group.iloc[i-1]['vid_nview']) / np.maximum(
                     (current['vid_scrapeTime'] - group.iloc[i-1]['vid_scrapeTime']).total_seconds() / 3600, 0.1)
@@ -432,6 +441,7 @@ class TikTokFeatureEngineerOnline:
         
         return pd.DataFrame(features_list)
     
+    # Trích xuất đặc trưng cho task 1 
     def _extract_video_level_features(self, df: pd.DataFrame) -> pd.DataFrame:
         all_features = []
         
@@ -445,23 +455,26 @@ class TikTokFeatureEngineerOnline:
         
         return pd.concat(all_features, ignore_index=True)
     
+    # 
     def safe_get(df, col, default=0.0):
         return df[col] if col in df.columns else pd.Series([default] * len(df))
 
-    def _create_inference_data(self, video_features: pd.DataFrame) -> pd.DataFrame:
+    # Tạo training_data dựa trên đặc trưng video đã trích xuất 
+    def _create_training_data(self, video_features: pd.DataFrame) -> pd.DataFrame:
         if video_features.empty:
             return pd.DataFrame()
 
-        inference_data = []
+        training_data = []
 
+        # Raw data gồm 3 snapshot mỗi video --> sau khi trích xuất được df mới có 2 record delta/video. 
         for (user, vid_id), group in video_features.groupby(['user_name', 'vid_id']):
             group = group.sort_values('snapshot_index').reset_index(drop=True)
 
-            if len(group) < 3:
+            if len(group) < 2:
                 continue
 
             feature_snapshots = group.iloc[:2]
-            rolling_data = group.iloc[:3]
+            rolling_data = group.iloc[:2]
 
             rolling_view_growth = self.safe_get(rolling_data, 'view_growth_rate').rolling(window=2, min_periods=1)
             rolling_engagement_growth = self.safe_get(rolling_data, 'engagement_growth_rate').rolling(window=2, min_periods=1)
@@ -564,17 +577,18 @@ class TikTokFeatureEngineerOnline:
                 'latest_hours_since_post': self.safe_get(feature_snapshots.iloc[[-1]], 'current_hours_since_post').values[0],
             }
 
-            inference_data.append(feature_row)
+            training_data.append(feature_row)
 
-        return pd.DataFrame(inference_data)
+        return pd.DataFrame(training_data)
 
-    def _extract_user_trend_features(self, inference_data: pd.DataFrame) -> pd.DataFrame:
-        if inference_data.empty:
+    # Trích xuất đặc  trưng cho task 2 
+    def _extract_user_trend_features(self, training_data: pd.DataFrame) -> pd.DataFrame:
+        if training_data.empty:
             return pd.DataFrame()
 
         user_features = []
 
-        for user, group in inference_data.groupby('user_name'):
+        for user, group in training_data.groupby('user_name'):
             group = group.sort_values('latest_hours_since_post', ascending=False).head(self.n_recent)
             if len(group) == 0:
                 continue
@@ -681,30 +695,30 @@ class TikTokFeatureEngineerOnline:
         if video_features.empty:
             print("Warning: No video features extracted!")
             return {
-                'inference_data': pd.DataFrame(),
+                'training_data': pd.DataFrame(),
                 'user_trend_features': pd.DataFrame(),
                 'video_features': pd.DataFrame(),
                 'text_features': np.array([]),
                 'text_vectorizer': None
             }
 
-        inference_data = self._create_inference_data(video_features)
+        training_data = self._create_training_data(video_features)
 
-        if inference_data.empty:
+        if training_data.empty:
             print("Warning: Inference data is empty after snapshot processing!")
             return {
-                'inference_data': pd.DataFrame(),
+                'training_data': pd.DataFrame(),
                 'user_trend_features': pd.DataFrame(),
                 'video_features': video_features,
                 'text_features': np.array([]),
                 'text_vectorizer': None
             }
 
-        user_trend_features = self._extract_user_trend_features(inference_data)
-        text_features = self._prepare_text_features(inference_data)
+        user_trend_features = self._extract_user_trend_features(training_data)
+        text_features = self._prepare_text_features(training_data)
 
         return {
-            'inference_data': inference_data,
+            'training_data': training_data,
             'user_trend_features': user_trend_features,
             'video_features': video_features,
             'text_features': text_features,
