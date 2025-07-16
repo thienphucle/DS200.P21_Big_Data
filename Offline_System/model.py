@@ -10,7 +10,6 @@ from sklearn.metrics import (
     mean_squared_error, classification_report, accuracy_score, 
     f1_score, mean_absolute_error, r2_score, precision_recall_fscore_support
 )
-from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 import xgboost as xgb
@@ -37,51 +36,129 @@ class TikTokDataset(Dataset):
         
     def __len__(self):
         return len(self.training_data)
-        
+    
     def __getitem__(self, idx):
         row = self.training_data.iloc[idx]
         
         # Text features from TF-IDF (pre-computed)
         text_features = torch.tensor(self.text_features[idx], dtype=torch.float32)
         
-        # Safe value extraction
+        # Safe value extraction with better handling
         def safe_float(value, default=0.0):
             try:
-                return float(value) if pd.notna(value) else default
+                if pd.isna(value) or value in ['', 'nan', 'NaN']:
+                    return default
+                return float(value)
             except (ValueError, TypeError):
                 return default
         
-        # Structured features from feature engineering
         structured_features = torch.tensor([
+            # Basic user features
             safe_float(row.get('user_nfollower', 0)),
             safe_float(row.get('user_nfollowing', 0)), 
+            safe_float(row.get('log_user_nfollower', 0)),
+            safe_float(row.get('follower_following_ratio', 0)),
+            safe_float(row.get('is_verified', 0)),
+            safe_float(row.get('is_mega_influencer', 0)),
+            safe_float(row.get('is_micro_influencer', 0)),
+            safe_float(row.get('is_nano_influencer', 0)),
+            
+            # Content features
             safe_float(row.get('vid_duration_seconds', 0)),
+            safe_float(row.get('log_duration', 0)),
+            safe_float(row.get('is_short_video', 0)),
+            safe_float(row.get('is_medium_video', 0)),
+            safe_float(row.get('is_long_video', 0)),
+            safe_float(row.get('music_popularity', 0)),
+            safe_float(row.get('log_music_popularity', 0)),
+            safe_float(row.get('is_trending_music', 0)),
+            
+            # Hashtag features
+            safe_float(row.get('num_hashtags', 0)),
+            safe_float(row.get('hashtag_density', 0)),
+            safe_float(row.get('has_many_hashtags', 0)),
+            
+            # Caption features
+            safe_float(row.get('caption_length', 0)),
+            safe_float(row.get('log_caption_length', 0)),
+            safe_float(row.get('has_caption', 0)),
+            safe_float(row.get('has_long_caption', 0)),
+            safe_float(row.get('caption_hashtag_ratio', 0)),
+            
+            # Temporal features
             safe_float(row.get('post_hour', 0)),
             safe_float(row.get('post_day_of_week', 0)),
-            safe_float(row.get('is_verified', 0)),
-            safe_float(row.get('music_popularity', 0)),
-            safe_float(row.get('num_hashtags', 0)),
-            safe_float(row.get('caption_length', 0)),
             safe_float(row.get('post_is_weekend', 0)),
-            safe_float(row.get('has_caption', 0)),
-            safe_float(row.get('user_nfollower', 0)) / max(safe_float(row.get('user_nfollowing', 1)), 1),
-            safe_float(row.get('latest_views', 1)) / max(safe_float(row.get('latest_hours_since_post', 1)), 1)
+            safe_float(row.get('is_prime_time', 0)),
+            safe_float(row.get('is_morning_peak', 0)),
+            safe_float(row.get('is_friday', 0)),
+            safe_float(row.get('is_monday', 0))
         ], dtype=torch.float32)
         
-        # Time series features from feature engineering output
         time_features = torch.tensor([
+            # Basic growth rates
             safe_float(row.get('avg_view_growth_rate', 0)),
             safe_float(row.get('avg_like_growth_rate', 0)),
             safe_float(row.get('avg_comment_growth_rate', 0)),
             safe_float(row.get('avg_share_growth_rate', 0)),
             safe_float(row.get('avg_save_growth_rate', 0)),
             safe_float(row.get('avg_engagement_growth_rate', 0)),
+            
+            # Log-transformed growth rates
+            safe_float(row.get('log_view_growth_rate', 0)),
+            safe_float(row.get('log_like_growth_rate', 0)),
+            safe_float(row.get('log_comment_growth_rate', 0)),
+            safe_float(row.get('log_share_growth_rate', 0)),
+            safe_float(row.get('log_save_growth_rate', 0)),
+            safe_float(row.get('log_engagement_growth_rate', 0)),
+            
+            # Variability measures
             safe_float(row.get('std_view_growth_rate', 0)),
             safe_float(row.get('std_like_growth_rate', 0)),
             safe_float(row.get('std_comment_growth_rate', 0)),
             safe_float(row.get('std_share_growth_rate', 0)),
             safe_float(row.get('std_save_growth_rate', 0)),
             safe_float(row.get('std_engagement_growth_rate', 0)),
+            
+            # Advanced trend features
+            safe_float(row.get('max_view_growth_rate', 0)),
+            safe_float(row.get('min_view_growth_rate', 0)),
+            safe_float(row.get('max_engagement_growth_rate', 0)),
+            safe_float(row.get('min_engagement_growth_rate', 0)),
+            safe_float(row.get('view_growth_trend', 0)),
+            safe_float(row.get('view_growth_volatility', 0)),
+            safe_float(row.get('engagement_growth_trend', 0)),
+            safe_float(row.get('engagement_growth_volatility', 0)),
+            
+            # Momentum and acceleration
+            safe_float(row.get('recent_view_momentum', 0)),
+            safe_float(row.get('recent_engagement_momentum', 0)),
+            safe_float(row.get('avg_view_acceleration', 0)),
+            safe_float(row.get('avg_engagement_acceleration', 0)),
+            
+            # Interaction features
+            safe_float(row.get('follower_engagement_interaction', 0)),
+            safe_float(row.get('duration_engagement_interaction', 0)),
+            safe_float(row.get('hashtag_engagement_interaction', 0)),
+            
+            # Normalized features
+            safe_float(row.get('normalized_views', 0)),
+            safe_float(row.get('normalized_engagement', 0)),
+            
+            # Relative growth features
+            safe_float(row.get('avg_relative_view_growth', 0)),
+            safe_float(row.get('avg_relative_like_growth', 0)),
+            safe_float(row.get('avg_relative_comment_growth', 0)),
+            safe_float(row.get('avg_relative_share_growth', 0)),
+            safe_float(row.get('avg_relative_save_growth', 0)),
+            
+            # Engagement mix features
+            safe_float(row.get('avg_engagement_mix_likes', 0)),
+            safe_float(row.get('avg_engagement_mix_comments', 0)),
+            safe_float(row.get('avg_engagement_mix_shares', 0)),
+            safe_float(row.get('avg_engagement_mix_saves', 0)),
+            
+            # Current state features
             safe_float(row.get('latest_hours_since_post', 0)),
             safe_float(row.get('latest_views', 0)),
             safe_float(row.get('latest_likes', 0)),
@@ -90,7 +167,7 @@ class TikTokDataset(Dataset):
             safe_float(row.get('latest_saves', 0))
         ], dtype=torch.float32)
         
-        # Add user trend features if available
+        # User trend features
         user_name = row.get('user_name', '')
         if user_name in self.user_trend_features.index:
             user_trends = self.user_trend_features.loc[user_name]
@@ -100,12 +177,20 @@ class TikTokDataset(Dataset):
                 safe_float(user_trends.get('avg_engagement_growth', 0)),
                 safe_float(user_trends.get('view_success_rate', 0)),
                 safe_float(user_trends.get('engagement_success_rate', 0)),
-                safe_float(user_trends.get('increase_rate', 0))
+                safe_float(user_trends.get('increase_rate', 0)),
+                safe_float(user_trends.get('normalized_avg_views', 0)),
+                safe_float(user_trends.get('normalized_avg_engagement', 0)),
+                safe_float(user_trends.get('avg_momentum_view', 0)),
+                safe_float(user_trends.get('avg_momentum_engagement', 0)),
+                safe_float(user_trends.get('hashtag_strategy_score', 0)),
+                safe_float(user_trends.get('content_length_strategy', 0)),
+                safe_float(user_trends.get('avg_engagement_quality', 0)),
+                safe_float(user_trends.get('engagement_velocity', 0))
             ], dtype=torch.float32)
             time_features = torch.cat([time_features, user_trend_tensor])
         else:
             # Add zeros for missing user trends
-            user_trend_tensor = torch.zeros(6, dtype=torch.float32)
+            user_trend_tensor = torch.zeros(14, dtype=torch.float32)
             time_features = torch.cat([time_features, user_trend_tensor])
         
         result = {
@@ -115,13 +200,22 @@ class TikTokDataset(Dataset):
         }
         
         if self.mode == 'train':
-            # Target variables - Predict absolute values at next time point (snapshot 4)
+            # Target variables with log-transformed versions
             targets = torch.tensor([
                 safe_float(row.get('target_view_growth_rate', 0)),
                 safe_float(row.get('target_like_growth_rate', 0)),
                 safe_float(row.get('target_comment_growth_rate', 0)),
                 safe_float(row.get('target_share_growth_rate', 0)),
                 safe_float(row.get('target_save_growth_rate', 0))
+            ], dtype=torch.float32)
+            
+            # Log-transformed targets for better distribution
+            log_targets = torch.tensor([
+                safe_float(row.get('target_log_view_growth_rate', 0)),
+                safe_float(row.get('target_log_like_growth_rate', 0)),
+                safe_float(row.get('target_log_comment_growth_rate', 0)),
+                safe_float(row.get('target_log_share_growth_rate', 0)),
+                safe_float(row.get('target_log_save_growth_rate', 0))
             ], dtype=torch.float32)
             
             # Classification targets - Growth level classification
@@ -136,16 +230,33 @@ class TikTokDataset(Dataset):
             ], dtype=torch.long)
             
             result['targets'] = targets
+            result['log_targets'] = log_targets
             result['class_targets'] = class_targets
         
         return result
 
+# Transformer model for tabular data
 class TabTransformer(nn.Module):    
-    def __init__(self, input_dim, hidden_dim=128, num_heads=8, num_layers=4, dropout=0.1):
+    def __init__(self, input_dim, hidden_dim=256, num_heads=8, num_layers=6, dropout=0.1):
         super().__init__()
         
-        self.input_projection = nn.Linear(input_dim, hidden_dim)
+        # Input projection
+        self.input_projection = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+        
+        # Feature embeddings
+        self.feature_embeddings = nn.ModuleList([
+            nn.Linear(1, hidden_dim // 8) for _ in range(min(input_dim, 16))
+        ])
+        
+        # Layer normalization
         self.layer_norm_input = nn.LayerNorm(hidden_dim)
+        
+        # Transformer layers
         self.transformer_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=hidden_dim,
@@ -157,44 +268,72 @@ class TabTransformer(nn.Module):
                 norm_first=True
             ) for _ in range(num_layers)
         ])
+        
+        # Multi-scale attention
         self.feature_attention = nn.MultiheadAttention(
-            hidden_dim, num_heads=4, dropout=dropout, batch_first=True
+            hidden_dim, num_heads=num_heads, dropout=dropout, batch_first=True
         )
-        self.output_projection = nn.Linear(hidden_dim, hidden_dim)
+        
+        # Output processing
+        self.output_projection = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
+        
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
-        x = self.input_projection(x)
-        x = self.layer_norm_input(x)
-        x = x.unsqueeze(1)
+        # Input processing
+        x_proj = self.input_projection(x)
+        x_proj = self.layer_norm_input(x_proj)
+        x_proj = x_proj.unsqueeze(1)
         
+        # Apply transformer layers with residual connections
         for layer in self.transformer_layers:
-            x = layer(x)
+            residual = x_proj
+            x_proj = layer(x_proj)
+            x_proj = x_proj + residual  # Explicit residual connection
         
-        attended_x, attention_weights = self.feature_attention(x, x, x)
-        x = x + attended_x 
-        x = x.squeeze(1)
-        x = self.dropout(x)
-        x = self.output_projection(x)
+        # Multi-head attention
+        attended_x, attention_weights = self.feature_attention(x_proj, x_proj, x_proj)
+        x_proj = x_proj + attended_x  # Residual connection
         
-        return x, attention_weights
+        x_proj = x_proj.squeeze(1)
+        x_proj = self.dropout(x_proj)
+        x_proj = self.output_projection(x_proj)
+        
+        return x_proj, attention_weights
 
+# Temporal Fusion Transformer (TFT) model 
 class TemporalFusionTransformer(nn.Module):    
-    def __init__(self, input_dim, hidden_dim=128, num_heads=8, num_layers=4, dropout=0.1):
+    def __init__(self, input_dim, hidden_dim=256, num_heads=8, num_layers=6, dropout=0.1):
         super().__init__()
         
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        self.input_projection = nn.Linear(input_dim, hidden_dim)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
-        self.positional_encoding = nn.Parameter(torch.randn(1000, hidden_dim) * 0.1)
         
-        # Fixed: Variable selection should work on input dimension, not hidden dimension
+        # Input processing
+        self.input_projection = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout)
+        )
+        
+        self.layer_norm = nn.LayerNorm(hidden_dim)
+        self.positional_encoding = nn.Parameter(torch.randn(1000, hidden_dim) * 0.02)
+        
+        # Variable selection with gating
         self.variable_selection = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),  # Changed from hidden_dim to input_dim
+            nn.Linear(input_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, input_dim),
-            nn.Softmax(dim=-1)
+            nn.Sigmoid()
         )
         
         # Temporal attention layers
@@ -210,12 +349,23 @@ class TemporalFusionTransformer(nn.Module):
             ) for _ in range(num_layers)
         ])
         
+        # Gating mechanism
         self.temporal_gate = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Sigmoid()
         )
         
-        self.output_projection = nn.Linear(hidden_dim, hidden_dim)
+        # Output processing
+        self.output_projection = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim)
+        )
         
     def forward(self, x):
         batch_size = x.shape[0]
@@ -225,7 +375,7 @@ class TemporalFusionTransformer(nn.Module):
         
         seq_len = x.shape[1]
         
-        # Variable selection on original input
+        # Variable selection
         var_weights = self.variable_selection(x.mean(dim=1))
         x = x * var_weights.unsqueeze(1)
         
@@ -245,16 +395,24 @@ class TemporalFusionTransformer(nn.Module):
             gate = self.temporal_gate(x)
             x = gate * x + (1 - gate) * residual
         
-        # Global pooling
-        x = x.mean(dim=1)
+        # Global pooling with attention weighting
+        attention_weights = F.softmax(torch.mean(x, dim=-1, keepdim=True), dim=1)
+        x = torch.sum(x * attention_weights, dim=1)
+        
         return self.output_projection(x)
 
+# Multi-modal fusion model 
 class MultiModalFusion(nn.Module):    
     def __init__(self, text_dim, structured_dim, temporal_dim, fusion_dim=512):
         super().__init__()
         
+        # Projection layers with residual connections
         self.text_projection = nn.Sequential(
             nn.Linear(text_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(fusion_dim, fusion_dim),
             nn.LayerNorm(fusion_dim),
             nn.GELU(),
             nn.Dropout(0.1)
@@ -264,11 +422,19 @@ class MultiModalFusion(nn.Module):
             nn.Linear(structured_dim, fusion_dim),
             nn.LayerNorm(fusion_dim),
             nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(fusion_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.GELU(),
             nn.Dropout(0.1)
         )
         
         self.temporal_projection = nn.Sequential(
             nn.Linear(temporal_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(fusion_dim, fusion_dim),
             nn.LayerNorm(fusion_dim),
             nn.GELU(),
             nn.Dropout(0.1)
@@ -288,12 +454,16 @@ class MultiModalFusion(nn.Module):
         # Modality gating
         self.modality_gate = nn.Sequential(
             nn.Linear(fusion_dim * 3, fusion_dim),
+            nn.LayerNorm(fusion_dim),
             nn.GELU(),
-            nn.Linear(fusion_dim, 3),
+            nn.Dropout(0.1),
+            nn.Linear(fusion_dim, fusion_dim // 2),
+            nn.GELU(),
+            nn.Linear(fusion_dim // 2, 3),
             nn.Softmax(dim=-1)
         )
         
-        # Final fusion layers
+        # Fusion layers with skip connections
         self.fusion_layers = nn.Sequential(
             nn.Linear(fusion_dim, fusion_dim),
             nn.LayerNorm(fusion_dim),
@@ -302,11 +472,15 @@ class MultiModalFusion(nn.Module):
             nn.Linear(fusion_dim, fusion_dim),
             nn.LayerNorm(fusion_dim),
             nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(fusion_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.GELU(),
             nn.Dropout(0.1)
         )
         
     def forward(self, text_features, structured_features, temporal_features):
-        # Project all modalities
+        # Project all modalities with residual connections
         text_proj = self.text_projection(text_features).unsqueeze(1)
         structured_proj = self.structured_projection(structured_features).unsqueeze(1)
         temporal_proj = self.temporal_projection(temporal_features).unsqueeze(1)
@@ -327,13 +501,15 @@ class MultiModalFusion(nn.Module):
         concat_features = torch.cat([text_attended, struct_attended, temp_attended], dim=-1)
         gate_weights = self.modality_gate(concat_features)
         
-        # Weighted combination
+        # Weighted combination with residual connection
         fused_features = (gate_weights[:, 0:1] * text_attended + 
                          gate_weights[:, 1:2] * struct_attended + 
                          gate_weights[:, 2:3] * temp_attended)
         
-        # Final fusion
+        # Fusion with skip connection
+        residual = fused_features
         fused_features = self.fusion_layers(fused_features)
+        fused_features = fused_features + residual  # Skip connection
         
         attention_weights = {
             'text_attention': text_attn,
@@ -344,75 +520,104 @@ class MultiModalFusion(nn.Module):
         
         return fused_features, attention_weights
 
+# Main multi-head model 
 class TikTokGrowthPredictor(nn.Module):    
     def __init__(self, 
                  text_dim=512, 
-                 structured_dim=13,
-                 temporal_dim=24,
+                 structured_dim=29,  # Updated to match actual features
+                 temporal_dim=60,    # Updated for temporal features
                  fusion_dim=512,
                  num_regression_outputs=5,
                  num_classification_outputs=6,
                  num_classes=3):
         super().__init__()
         
+        # Text processor
         self.text_processor = nn.Sequential(
-            nn.Linear(text_dim, 256),
-            nn.LayerNorm(256),
+            nn.Linear(text_dim, 512),
+            nn.LayerNorm(512),
             nn.GELU(),
             nn.Dropout(0.2),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(0.1),
             nn.Linear(256, 128),
             nn.LayerNorm(128),
             nn.GELU(),
             nn.Dropout(0.1)
         )
         
+        # Processors
         self.structured_processor = TabTransformer(
             input_dim=structured_dim, 
-            hidden_dim=128, 
+            hidden_dim=256,
             num_heads=8, 
-            num_layers=4
+            num_layers=6,
+            dropout=0.1
         )
         
         self.temporal_processor = TemporalFusionTransformer(
             input_dim=temporal_dim, 
-            hidden_dim=128, 
+            hidden_dim=256,
             num_heads=8, 
-            num_layers=4
+            num_layers=6,
+            dropout=0.1
         )
         
         self.fusion_layer = MultiModalFusion(
-            text_dim=128,  # Output from text processor
-            structured_dim=128,
-            temporal_dim=128,
+            text_dim=128,
+            structured_dim=256,
+            temporal_dim=256,
             fusion_dim=fusion_dim
         )
         
-        # Regression head for predicting next time point interactions
+        # Regression head with multiple outputs
         self.regression_head = nn.Sequential(
+            nn.Linear(fusion_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.GELU(),
+            nn.Dropout(0.3),
             nn.Linear(fusion_dim, fusion_dim // 2),
             nn.LayerNorm(fusion_dim // 2),
             nn.GELU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.2),
             nn.Linear(fusion_dim // 2, fusion_dim // 4),
             nn.LayerNorm(fusion_dim // 4),
             nn.GELU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(fusion_dim // 4, fusion_dim // 8),
             nn.GELU(),
             nn.Dropout(0.1),
             nn.Linear(fusion_dim // 8, num_regression_outputs)
         )
         
-        # Classification head for growth level prediction
-        self.classification_head = nn.Sequential(
+        # Log regression head
+        self.log_regression_head = nn.Sequential(
             nn.Linear(fusion_dim, fusion_dim // 2),
             nn.LayerNorm(fusion_dim // 2),
             nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(fusion_dim // 2, fusion_dim // 4),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(fusion_dim // 4, num_regression_outputs)
+        )
+        
+        # Classification head
+        self.classification_head = nn.Sequential(
+            nn.Linear(fusion_dim, fusion_dim),
+            nn.LayerNorm(fusion_dim),
+            nn.GELU(),
             nn.Dropout(0.3),
+            nn.Linear(fusion_dim, fusion_dim // 2),
+            nn.LayerNorm(fusion_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.2),
             nn.Linear(fusion_dim // 2, fusion_dim // 4),
             nn.LayerNorm(fusion_dim // 4),
             nn.GELU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.1),
             nn.Linear(fusion_dim // 4, num_classification_outputs * num_classes)
         )
         
@@ -421,14 +626,15 @@ class TikTokGrowthPredictor(nn.Module):
         self._init_weights()
         
     def _init_weights(self):
-        for module in [self.text_processor, self.regression_head, self.classification_head]:
+        for module in [self.text_processor, self.regression_head, self.log_regression_head, self.classification_head]:
             for layer in module:
                 if isinstance(layer, nn.Linear):
                     nn.init.kaiming_normal_(layer.weight, mode='fan_out', nonlinearity='relu')
-                    nn.init.zeros_(layer.bias)
+                    if layer.bias is not None:
+                        nn.init.zeros_(layer.bias)
     
     def forward(self, text_features, structured_features, time_features):
-        # Process text features with neural network
+        # Process text features
         text_features_processed = self.text_processor(text_features)
         
         # Process structured features
@@ -444,6 +650,7 @@ class TikTokGrowthPredictor(nn.Module):
         
         # Generate predictions
         regression_predictions = self.regression_head(fused_features)
+        log_regression_predictions = self.log_regression_head(fused_features)
         
         classification_logits = self.classification_head(fused_features)
         classification_predictions = classification_logits.view(
@@ -456,150 +663,397 @@ class TikTokGrowthPredictor(nn.Module):
             **attention_weights
         }
         
-        return regression_predictions, classification_predictions, all_attention_weights
+        return regression_predictions, log_regression_predictions, classification_predictions, all_attention_weights
 
+
+# N-BEATS Implementation for Time Series Forecasting
+class NBeatsBlock(nn.Module):
+    def __init__(self, input_size, theta_size, basis_function, layers, layer_size, dropout=0.1):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(input_size if i == 0 else layer_size, layer_size),
+                nn.LayerNorm(layer_size),
+                nn.GELU(),
+                nn.Dropout(dropout)
+            ) for i in range(layers)
+        ])
+        self.basis_function = basis_function
+        self.theta_layer = nn.Linear(layer_size, theta_size)
+        
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        theta = self.theta_layer(x)
+        backcast, forecast = self.basis_function(theta)
+        return backcast, forecast
+
+# N-BEATS model
+class NBeatsModel(nn.Module):
+    def __init__(self, input_size=128, forecast_size=5, stack_types=['generic'], 
+                 nb_blocks_per_stack=3, hidden_layer_units=512, dropout=0.1):
+        super().__init__()
+        self.input_size = input_size
+        self.forecast_size = forecast_size
+        self.stacks = nn.ModuleList()
+        
+        for stack_type in stack_types:
+            blocks = nn.ModuleList()
+            for _ in range(nb_blocks_per_stack):
+                if stack_type == 'generic':
+                    basis_function = GenericBasis(input_size, forecast_size)
+                    theta_size = input_size + forecast_size
+                else:
+                    basis_function = GenericBasis(input_size, forecast_size)
+                    theta_size = input_size + forecast_size
+                    
+                block = NBeatsBlock(
+                    input_size=input_size,
+                    theta_size=theta_size,
+                    basis_function=basis_function,
+                    layers=4,
+                    layer_size=hidden_layer_units,
+                    dropout=dropout
+                )
+                blocks.append(block)
+            self.stacks.append(blocks)
+    
+    def forward(self, x):
+        residuals = x
+        forecast = torch.zeros(x.size(0), self.forecast_size, device=x.device)
+        
+        for stack in self.stacks:
+            for block in stack:
+                backcast, block_forecast = block(residuals)
+                residuals = residuals - backcast
+                forecast = forecast + block_forecast
+                
+        return forecast
+
+# Basis function for N-Beats
+class GenericBasis(nn.Module):
+    def __init__(self, backcast_size, forecast_size):
+        super().__init__()
+        self.backcast_size = backcast_size
+        self.forecast_size = forecast_size
+        
+    def forward(self, theta):
+        backcast = theta[:, :self.backcast_size]
+        forecast = theta[:, -self.forecast_size:]
+        return backcast, forecast
+
+# Baseline models pipeline
 class ModernBaselineModels:
     def __init__(self):
         self.models = {
             # Traditional models
             'linear_regression': LinearRegression(),
-            'random_forest_reg': RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1),
+            'random_forest_reg': RandomForestRegressor(n_estimators=300, random_state=42, n_jobs=-1, max_depth=15),
             'logistic_regression': LogisticRegression(random_state=42, max_iter=1000),
-            'random_forest_cls': RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1),
-
-            # Nbeats-like MLP model
-            'nbeats_mlp': MLPRegressor(
-                hidden_layer_sizes=(256, 128, 64, 32),
-                activation='relu',
-                solver='adam',
-                alpha=0.001,
-                learning_rate='adaptive',
-                max_iter=500,
-                random_state=42
-            ),
-
-            # Modern gradient boosting models
+            'random_forest_cls': RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, max_depth=15),
+            
+            # Gradient boosting models
             'xgboost_reg': xgb.XGBRegressor(
-                n_estimators=200,
-                max_depth=6,
-                learning_rate=0.1,
+                n_estimators=300, 
+                max_depth=8, 
+                learning_rate=0.05, 
                 random_state=42,
-                n_jobs=-1
+                n_jobs=-1,
+                subsample=0.8,
+                colsample_bytree=0.8
             ),
             'xgboost_cls': xgb.XGBClassifier(
-                n_estimators=200,
-                max_depth=6,
-                learning_rate=0.1,
+                n_estimators=300, 
+                max_depth=8, 
+                learning_rate=0.05, 
                 random_state=42,
-                n_jobs=-1
+                n_jobs=-1,
+                subsample=0.8,
+                colsample_bytree=0.8
             ),
             'lightgbm_reg': lgb.LGBMRegressor(
-                n_estimators=200,
-                max_depth=6,
-                learning_rate=0.1,
+                n_estimators=300, 
+                max_depth=8, 
+                learning_rate=0.05, 
                 random_state=42,
                 n_jobs=-1,
-                verbose=-1
+                verbose=-1,
+                subsample=0.8,
+                colsample_bytree=0.8
             ),
             'lightgbm_cls': lgb.LGBMClassifier(
-                n_estimators=200,
-                max_depth=6,
-                learning_rate=0.1,
+                n_estimators=300, 
+                max_depth=8, 
+                learning_rate=0.05, 
                 random_state=42,
                 n_jobs=-1,
-                verbose=-1
+                verbose=-1,
+                subsample=0.8,
+                colsample_bytree=0.8
             ),
             'catboost_reg': cb.CatBoostRegressor(
-                iterations=200,
-                depth=6,
-                learning_rate=0.1,
+                iterations=300,
+                depth=8,
+                learning_rate=0.05,
                 random_seed=42,
-                verbose=False
+                verbose=False,
+                bootstrap_type='Bernoulli',
+                subsample=0.8
             ),
             'catboost_cls': cb.CatBoostClassifier(
-                iterations=200,
-                depth=6,
-                learning_rate=0.1,
+                iterations=300,
+                depth=8,
+                learning_rate=0.05,
                 random_seed=42,
-                verbose=False
+                verbose=False,
+                bootstrap_type='Bernoulli',
+                subsample=0.8
             )
         }
-
+        
+        # N-BEATS model
+        self.nbeats_model = None
+        
         self.scalers = {}
         self.fitted_models = {}
         self.feature_importance = {}
-
+    
     def prepare_features(self, training_data, text_features):
         feature_columns = [
+            # Basic features
             'user_nfollower', 'user_nfollowing', 'vid_duration_seconds',
             'post_hour', 'post_day_of_week', 'is_verified', 'music_popularity',
             'num_hashtags', 'caption_length', 'post_is_weekend', 'has_caption',
+            
+            # User features
+            'log_user_nfollower', 'follower_following_ratio', 'is_mega_influencer',
+            'is_micro_influencer', 'is_nano_influencer',
+            
+            # Content features
+            'log_duration', 'is_short_video', 'is_medium_video', 'is_long_video',
+            'log_music_popularity', 'is_trending_music', 'hashtag_density',
+            'has_many_hashtags', 'log_caption_length',
+            'has_long_caption', 'caption_hashtag_ratio',
+            
+            # Temporal features
+            'is_prime_time', 'is_morning_peak', 'is_friday', 'is_monday',
+            
+            # Growth rate features
             'avg_view_growth_rate', 'avg_like_growth_rate', 'avg_comment_growth_rate',
             'avg_share_growth_rate', 'avg_save_growth_rate', 'avg_engagement_growth_rate',
+            
+            # Log-transformed growth rates
+            'log_view_growth_rate', 'log_like_growth_rate', 'log_comment_growth_rate',
+            'log_share_growth_rate', 'log_save_growth_rate', 'log_engagement_growth_rate',
+            
+            # Variability features
             'std_view_growth_rate', 'std_like_growth_rate', 'std_comment_growth_rate',
             'std_share_growth_rate', 'std_save_growth_rate', 'std_engagement_growth_rate',
+            
+            # Advanced features
+            'max_view_growth_rate', 'min_view_growth_rate', 'max_engagement_growth_rate',
+            'min_engagement_growth_rate', 'view_growth_trend', 'view_growth_volatility',
+            'engagement_growth_trend', 'engagement_growth_volatility',
+            
+            # Momentum and interaction features
+            'recent_view_momentum', 'recent_engagement_momentum', 'avg_view_acceleration',
+            'avg_engagement_acceleration', 'follower_engagement_interaction',
+            'duration_engagement_interaction', 'hashtag_engagement_interaction',
+            
+            # Normalized features
+            'normalized_views', 'normalized_engagement',
+            
+            # Current state
             'latest_hours_since_post', 'latest_views', 'latest_likes',
             'latest_comments', 'latest_shares', 'latest_saves'
         ]
-
-        numerical_features = training_data[feature_columns].fillna(0).values
-        text_subset = text_features[:, :100]
+        
+        # Extract numerical features with better handling of missing values
+        available_columns = [col for col in feature_columns if col in training_data.columns]
+        numerical_features = training_data[available_columns].fillna(0).values
+        
+        # Combine with text features
+        text_subset = text_features[:, :150]  # Use TF-IDF features
         combined_features = np.hstack([numerical_features, text_subset])
-
-        return combined_features, feature_columns
-
+        
+        return combined_features, available_columns
+    
+    def train_nbeats_model(self, X_train, y_train_reg, X_val, y_val_reg, device='cpu'):
+        """Train N-BEATS model"""
+        print("Training N-BEATS model...")
+        
+        # Initialize N-BEATS model
+        input_size = X_train.shape[1]
+        self.nbeats_model = NBeatsModel(
+            input_size=input_size,
+            forecast_size=5,
+            stack_types=['generic', 'generic', 'generic'],
+            nb_blocks_per_stack=3,
+            hidden_layer_units=512,
+            dropout=0.1
+        ).to(device)
+        
+        # Convert to PyTorch tensors
+        X_train_tensor = torch.FloatTensor(X_train).to(device)
+        y_train_tensor = torch.FloatTensor(y_train_reg).to(device)
+        X_val_tensor = torch.FloatTensor(X_val).to(device)
+        y_val_tensor = torch.FloatTensor(y_val_reg).to(device)
+        
+        # Training setup
+        optimizer = torch.optim.AdamW(self.nbeats_model.parameters(), lr=0.001, weight_decay=0.01)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
+        criterion = nn.SmoothL1Loss()
+        
+        # Training loop
+        epochs = 100
+        batch_size = 64
+        best_val_loss = float('inf')
+        patience = 15
+        patience_counter = 0
+        
+        for epoch in range(epochs):
+            self.nbeats_model.train()
+            train_loss = 0.0
+            
+            # Mini-batch training
+            for i in range(0, len(X_train_tensor), batch_size):
+                batch_X = X_train_tensor[i:i+batch_size]
+                batch_y = y_train_tensor[i:i+batch_size]
+                
+                optimizer.zero_grad()
+                predictions = self.nbeats_model(batch_X)
+                loss = criterion(predictions, batch_y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.nbeats_model.parameters(), max_norm=1.0)
+                optimizer.step()
+                
+                train_loss += loss.item()
+            
+            # Validation
+            self.nbeats_model.eval()
+            with torch.no_grad():
+                val_predictions = self.nbeats_model(X_val_tensor)
+                val_loss = criterion(val_predictions, y_val_tensor).item()
+            
+            scheduler.step(val_loss)
+            
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                torch.save(self.nbeats_model.state_dict(), 'ModelResults/nbeats_best.pth')
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    break
+        
+        # Load best model
+        self.nbeats_model.load_state_dict(torch.load('ModelResults/nbeats_best.pth'))
+        self.nbeats_model.eval()
+        
+        # Make predictions
+        with torch.no_grad():
+            train_pred = self.nbeats_model(X_train_tensor).cpu().numpy()
+            val_pred = self.nbeats_model(X_val_tensor).cpu().numpy()
+        
+        # Calculate metrics (average across all targets)
+        y_train_avg = np.mean(y_train_reg, axis=1)
+        y_val_avg = np.mean(y_val_reg, axis=1)
+        train_pred_avg = np.mean(train_pred, axis=1)
+        val_pred_avg = np.mean(val_pred, axis=1)
+        
+        mse = mean_squared_error(y_val_avg, val_pred_avg)
+        mae = mean_absolute_error(y_val_avg, val_pred_avg)
+        r2 = r2_score(y_val_avg, val_pred_avg)
+        
+        return {
+            'mse': mse,
+            'mae': mae,
+            'r2': r2,
+            'predictions': val_pred_avg
+        }
+    
     def train_baseline_models(self, X_train, y_train_reg, y_train_cls, X_val, y_val_reg, y_val_cls, feature_names):
         results = {}
+        
+        # Scaling
         scaler = RobustScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_val_scaled = scaler.transform(X_val)
         self.scalers['main'] = scaler
-
-        reg_models = [name for name in self.models.keys() if 'cls' not in name and 'logistic' not in name]
-
+        
+        # Train N-BEATS model
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        nbeats_results = self.train_nbeats_model(X_train_scaled, y_train_reg, X_val_scaled, y_val_reg, device)
+        results['nbeats_reg'] = nbeats_results
+        
+        # Regression models
+        reg_models = [name for name in self.models.keys() if name.endswith('_reg') or name == 'linear_regression']
+        
         for name in reg_models:
             model = self.models[name]
+            
+            # Train on average target
             y_train_avg = np.mean(y_train_reg, axis=1)
             y_val_avg = np.mean(y_val_reg, axis=1)
-
-            model.fit(X_train_scaled, y_train_avg)
-            y_pred = model.predict(X_val_scaled)
-
+            
+            # Use scaled features for traditional models, raw for tree-based
+            if 'linear' in name:
+                model.fit(X_train_scaled, y_train_avg)
+                y_pred = model.predict(X_val_scaled)
+            else:
+                model.fit(X_train, y_train_avg)
+                y_pred = model.predict(X_val)
+            
+            # Calculate metrics
             mse = mean_squared_error(y_val_avg, y_pred)
             mae = mean_absolute_error(y_val_avg, y_pred)
             r2 = r2_score(y_val_avg, y_pred)
-
+            
             results[name] = {
                 'mse': mse,
                 'mae': mae,
                 'r2': r2,
                 'predictions': y_pred
             }
-
+            
+            # Extract feature importance for tree-based models
             if hasattr(model, 'feature_importances_'):
                 self.feature_importance[name] = dict(zip(
-                    feature_names + [f'tfidf_{i}' for i in range(100)],
+                    feature_names + [f'tfidf_{i}' for i in range(150)], 
                     model.feature_importances_
                 ))
-
+            
             self.fitted_models[name] = model
-
-        cls_models = [name for name in self.models.keys() if 'cls' in name or 'logistic' in name]
-
+        
+        # Classification models
+        cls_models = [name for name in self.models.keys() if name.endswith('_cls') or name == 'logistic_regression']
+        
         for name in cls_models:
             model = self.models[name]
-
-            y_train_cls_eng = y_train_cls[:, -1].astype(int)
-            y_val_cls_eng = y_val_cls[:, -1].astype(int)
-
-            model.fit(X_train_scaled, y_train_cls_eng)
-            y_pred = model.predict(X_val_scaled)
-            y_pred_proba = model.predict_proba(X_val_scaled)
-
+            
+            # Use engagement growth class as target
+            y_train_cls_eng = y_train_cls[:, -1]
+            y_val_cls_eng = y_val_cls[:, -1]
+            
+            # Ensure classification targets are integers
+            y_train_cls_eng = y_train_cls_eng.astype(int)
+            y_val_cls_eng = y_val_cls_eng.astype(int)
+            
+            # Use scaled features for traditional models, raw for tree-based
+            if 'logistic' in name:
+                model.fit(X_train_scaled, y_train_cls_eng)
+                y_pred = model.predict(X_val_scaled)
+                y_pred_proba = model.predict_proba(X_val_scaled)
+            else:
+                model.fit(X_train, y_train_cls_eng)
+                y_pred = model.predict(X_val)
+                y_pred_proba = model.predict_proba(X_val)
+            
+            # Calculate metrics
             accuracy = accuracy_score(y_val_cls_eng, y_pred)
             f1_macro = f1_score(y_val_cls_eng, y_pred, average='macro')
             f1_weighted = f1_score(y_val_cls_eng, y_pred, average='weighted')
-
+            
             results[name] = {
                 'accuracy': accuracy,
                 'f1_macro': f1_macro,
@@ -607,35 +1061,37 @@ class ModernBaselineModels:
                 'predictions': y_pred,
                 'probabilities': y_pred_proba
             }
-
+            
+            # Extract feature importance for tree-based models
             if hasattr(model, 'feature_importances_'):
                 self.feature_importance[name] = dict(zip(
-                    feature_names + [f'tfidf_{i}' for i in range(100)],
+                    feature_names + [f'tfidf_{i}' for i in range(150)], 
                     model.feature_importances_
                 ))
-
+            
             self.fitted_models[name] = model
-
+        
         return results
 
+# Visualization class
 class Visualizer:    
     @staticmethod
     def plot_model_performance_comparison(neural_results, baseline_results, save_path='ModelResults/model_performance.png'):
-        """Compare model performance"""
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        """Compare model performance with visualization"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(18, 14))
         
         # Extract model names and metrics
-        reg_models = [name for name in baseline_results.keys() if any(k in name for k in ['reg', 'linear', 'mlp'])]
-        cls_models = [name for name in baseline_results.keys() if 'cls' in name or 'logistic' in name]
+        reg_models = [name for name in baseline_results.keys() if name.endswith('_reg') or name == 'linear_regression']
+        cls_models = [name for name in baseline_results.keys() if name.endswith('_cls') or name == 'logistic_regression']
         
-        # 1. Regression Performance (R² Score)
+        # Regression Performance (R² Score)
         r2_scores = [baseline_results[m]['r2'] for m in reg_models]
         r2_scores.append(neural_results.get('r2', 0))
         model_names_reg = [m.replace('_', ' ').title() for m in reg_models] + ['Neural Network']
         
-        colors_reg = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#e67e22'] + ['#34495e']
+        colors_reg = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#e67e22', '#1abc9c'] + ['#2c3e50']
         bars1 = ax1.bar(model_names_reg, r2_scores, color=colors_reg[:len(model_names_reg)])
-        ax1.set_title('📈 Growth Prediction Accuracy (R² Score)', fontsize=14, fontweight='bold')
+        ax1.set_title('Growth Prediction Accuracy (R² Score)', fontsize=16, fontweight='bold')
         ax1.set_ylabel('R² Score (Higher = Better)', fontsize=12)
         ax1.set_ylim(0, max(r2_scores) * 1.1)
         ax1.grid(True, alpha=0.3)
@@ -647,19 +1103,18 @@ class Visualizer:
         
         plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
         
-        # 2. Classification Performance (F1-Macro)
+        # Classification Performance (F1-Macro)
         f1_scores = [baseline_results[m]['f1_macro'] for m in cls_models]
         f1_scores.append(neural_results.get('f1_macro', 0))
         model_names_cls = [m.replace('_', ' ').title() for m in cls_models] + ['Neural Network']
         
-        colors_cls = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6'] + ['#34495e']
+        colors_cls = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c'] + ['#2c3e50']
         bars2 = ax2.bar(model_names_cls, f1_scores, color=colors_cls[:len(model_names_cls)])
-        ax2.set_title('🎯 Growth Classification Accuracy (F1-Macro)', fontsize=14, fontweight='bold')
+        ax2.set_title('Growth Classification Accuracy (F1-Macro)', fontsize=16, fontweight='bold')
         ax2.set_ylabel('F1-Macro Score (Higher = Better)', fontsize=12)
         ax2.set_ylim(0, max(f1_scores) * 1.1)
         ax2.grid(True, alpha=0.3)
         
-        # Add value labels on bars
         for bar, score in zip(bars2, f1_scores):
             height = bar.get_height()
             ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
@@ -667,37 +1122,33 @@ class Visualizer:
         
         plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
         
-        # 3. Economic Impact Analysis
-        # Simulate ROI based on prediction accuracy
-        roi_multipliers = [score * 100 for score in r2_scores]  # Convert R² to ROI %
-        bars3 = ax3.bar(model_names_reg, roi_multipliers, color=colors_reg[:len(model_names_reg)])
-        ax3.set_title('💰 Potential ROI from Accurate Predictions', fontsize=14, fontweight='bold')
-        ax3.set_ylabel('Estimated ROI Improvement (%)', fontsize=12)
+        # Model Complexity vs Performance
+        complexity_scores = [1, 2, 3, 4, 5, 6, 7, 8]
+        performance_scores = r2_scores
+        scatter = ax3.scatter(complexity_scores[:len(performance_scores)], performance_scores,
+                            s=300, c=colors_reg[:len(performance_scores)], alpha=0.7, edgecolors='black')
+        for i, (comp, perf, name) in enumerate(zip(complexity_scores[:len(performance_scores)],
+                                                    performance_scores, model_names_reg)):
+                ax3.annotate(name, (comp, perf), xytext=(5, 5), textcoords='offset points', 
+                            fontsize=10, fontweight='bold')
+        ax3.set_title('Model Complexity vs Performance Trade-off', fontsize=16, fontweight='bold')
+        ax3.set_xlabel('Model Complexity (Higher = More Complex)', fontsize=12)
+        ax3.set_ylabel('Prediction Accuracy (R²)', fontsize=12)
         ax3.grid(True, alpha=0.3)
         
-        # Add value labels
-        for bar, roi in zip(bars3, roi_multipliers):
-            height = bar.get_height()
-            ax3.text(bar.get_x() + bar.get_width()/2., height + 1,
-                    f'{roi:.1f}%', ha='center', va='bottom', fontweight='bold')
-        
-        plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45, ha='right')
-        
-        # 4. Model Efficiency vs Performance
-        # Simulate training time (inverse of complexity)
-        efficiency_scores = [0.9, 0.3, 0.7, 0.6, 0.5, 0.8, 0.2]  # Added N-BEATS efficiency
+        # Model Efficiency vs Performance
+        efficiency_scores = [0.9, 0.4, 0.7, 0.6, 0.5, 0.8, 0.3, 0.1]
         performance_scores = r2_scores
         
         scatter = ax4.scatter(efficiency_scores[:len(performance_scores)], performance_scores, 
-                            s=200, c=colors_reg[:len(performance_scores)], alpha=0.7)
+                            s=300, c=colors_reg[:len(performance_scores)], alpha=0.7, edgecolors='black')
         
-        # Add model labels
         for i, (eff, perf, name) in enumerate(zip(efficiency_scores[:len(performance_scores)], 
                                                  performance_scores, model_names_reg)):
             ax4.annotate(name, (eff, perf), xytext=(5, 5), textcoords='offset points', 
                         fontsize=10, fontweight='bold')
         
-        ax4.set_title('⚡ Model Efficiency vs Performance Trade-off', fontsize=14, fontweight='bold')
+        ax4.set_title('Model Efficiency vs Performance Trade-off', fontsize=16, fontweight='bold')
         ax4.set_xlabel('Training Efficiency (Higher = Faster)', fontsize=12)
         ax4.set_ylabel('Prediction Accuracy (R²)', fontsize=12)
         ax4.grid(True, alpha=0.3)
@@ -705,31 +1156,20 @@ class Visualizer:
         plt.tight_layout()
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
-
-        print("\n" + "="*60)
-        print("📊 ECONOMIC INSIGHTS & BUSINESS IMPACT")
-        print("="*60)
         
         best_reg_idx = np.argmax(r2_scores)
         best_cls_idx = np.argmax(f1_scores)
         
-        print(f"🏆 Best Growth Prediction Model: {model_names_reg[best_reg_idx]}")
+        print(f"\nBest Growth Prediction Model: {model_names_reg[best_reg_idx]}")
         print(f"   • R² Score: {r2_scores[best_reg_idx]:.3f}")
-        print(f"   • Potential ROI Improvement: {roi_multipliers[best_reg_idx]:.1f}%")
         
-        print(f"\n🎯 Best Classification Model: {model_names_cls[best_cls_idx]}")
+        print(f"\nBest Classification Model: {model_names_cls[best_cls_idx]}")
         print(f"   • F1-Macro Score: {f1_scores[best_cls_idx]:.3f}")
-        
-        print(f"\n💡 KEY BUSINESS INSIGHTS:")
-        print(f"   • Accurate growth prediction can improve content strategy ROI by up to {max(roi_multipliers):.1f}%")
-        print(f"   • N-BEATS model shows specialized time series forecasting capabilities")
-        print(f"   • Modern gradient boosting models (XGBoost, LightGBM, CatBoost) show superior performance")
-        print(f"   • Neural networks provide competitive results but require more computational resources")
         
         return best_reg_idx, best_cls_idx
     
     @staticmethod
-    def plot_feature_importance(feature_importance_dict, top_n=15, save_path='ModelResults/feature_importance.png'):
+    def plot_feature_importance(feature_importance_dict, top_n=20, save_path='ModelResults/feature_importance.png'):
         if not feature_importance_dict:
             print("No feature importance data available")
             return
@@ -745,14 +1185,14 @@ class Visualizer:
         
         features, importances = zip(*sorted_features)
         
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(14, 10))
         colors = plt.cm.viridis(np.linspace(0, 1, len(features)))
         bars = plt.barh(range(len(features)), importances, color=colors)
         
         plt.yticks(range(len(features)), features)
-        plt.xlabel('Feature Importance', fontsize=12, fontweight='bold')
+        plt.xlabel('Feature Importance', fontsize=14, fontweight='bold')
         plt.title(f'Top {top_n} Most Important Features for TikTok Growth Prediction\n({best_model.replace("_", " ").title()})', 
-                 fontsize=14, fontweight='bold')
+                 fontsize=16, fontweight='bold')
         plt.grid(True, alpha=0.3, axis='x')
         
         # Add value labels
@@ -764,14 +1204,15 @@ class Visualizer:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
 
+# Training orchestrator
 class Trainer:    
     def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
         self.model = None
         self.baseline_models = ModernBaselineModels()
         self.training_history = {
-            'train_losses': {'regression': [], 'classification': []},
-            'val_losses': {'regression': [], 'classification': []}
+            'train_losses': {'regression': [], 'log_regression': [], 'classification': []},
+            'val_losses': {'regression': [], 'log_regression': [], 'classification': []}
         }
         
     def prepare_data(self, training_data, user_trend_features, text_features, test_size=0.2, batch_size=16):
@@ -794,7 +1235,7 @@ class Trainer:
         train_text_features = text_features[train_indices]
         val_text_features = text_features[val_indices]
         
-        # Create datasets using TF-IDF features from feature engineering
+        # Create datasets
         train_dataset = TikTokDataset(train_df, user_trend_features, train_text_features, mode='train')
         val_dataset = TikTokDataset(val_df, user_trend_features, val_text_features, mode='train')
         
@@ -805,46 +1246,72 @@ class Trainer:
         X_train, feature_names = self.baseline_models.prepare_features(train_df, train_text_features)
         X_val, _ = self.baseline_models.prepare_features(val_df, val_text_features)
         
-        # Extract targets for baseline models
+        # Extract targets
         target_cols = ['target_view_growth_rate', 'target_like_growth_rate', 'target_comment_growth_rate', 
                       'target_share_growth_rate', 'target_save_growth_rate']
+        log_target_cols = ['target_log_view_growth_rate', 'target_log_like_growth_rate', 'target_log_comment_growth_rate', 
+                          'target_log_share_growth_rate', 'target_log_save_growth_rate']
         class_cols = ['view_growth_class', 'like_growth_class', 'comment_growth_class', 
                      'share_growth_class', 'save_growth_class', 'engagement_growth_class']
         
         y_train_reg = train_df[target_cols].fillna(0).values
         y_val_reg = val_df[target_cols].fillna(0).values
         
+        # Handle log targets if available
+        if all(col in train_df.columns for col in log_target_cols):
+            y_train_log_reg = train_df[log_target_cols].fillna(0).values
+            y_val_log_reg = val_df[log_target_cols].fillna(0).values
+        else:
+            y_train_log_reg = np.log1p(np.maximum(y_train_reg, 0))
+            y_val_log_reg = np.log1p(np.maximum(y_val_reg, 0))
+        
         # Convert class labels to numbers
         growth_class_map = {'increase': 2, 'stable': 1, 'decrease': 0}
         y_train_cls = train_df[class_cols].fillna('stable').replace(growth_class_map).values.astype(int)
         y_val_cls = val_df[class_cols].fillna('stable').replace(growth_class_map).values.astype(int)
-
         
-        return train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, y_train_cls, y_val_cls, feature_names
+        return (train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, 
+                y_train_log_reg, y_val_log_reg, y_train_cls, y_val_cls, feature_names)
     
-    def train(self, train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, y_train_cls, y_val_cls, 
-              feature_names, epochs=15, lr=2e-5, save_path='ModelResults/tiktok_model.pth'):
+    def train(self, train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, 
+              y_train_log_reg, y_val_log_reg, y_train_cls, y_val_cls, 
+              feature_names, epochs=20, lr=1e-4, save_path='ModelResults/tiktok_model.pth'):
 
         # Initialize neural network model
-        self.model = TikTokGrowthPredictor(text_dim=train_loader.dataset.text_features.shape[1])
+        sample_item = train_loader.dataset[0]
+        text_dim = sample_item['text_features'].shape[0]
+        structured_dim = sample_item['structured_features'].shape[0]
+        temporal_dim = sample_item['time_features'].shape[0]
+        
+        self.model = TikTokGrowthPredictor(
+            text_dim=text_dim,
+            structured_dim=structured_dim,
+            temporal_dim=temporal_dim
+        )
         self.model.to(self.device)
         
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.01)
+        # Optimizer and scheduler
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=0.01, eps=1e-8)
         
+        # Loss functions
         regression_criterion = nn.SmoothL1Loss()
+        log_regression_criterion = nn.MSELoss()
         classification_criterion = nn.CrossEntropyLoss(label_smoothing=0.1) 
         
+        # Scheduler
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer, 
             max_lr=lr,
             epochs=epochs,
             steps_per_epoch=len(train_loader),
             pct_start=0.1,
-            anneal_strategy='cos'
+            anneal_strategy='cos',
+            div_factor=10,
+            final_div_factor=100
         )
         
         best_val_loss = float('inf')
-        patience = 5
+        patience = 8
         patience_counter = 0
         
         print("Training Neural Network Model...")
@@ -853,6 +1320,7 @@ class Trainer:
             # Training
             self.model.train()
             train_reg_loss = 0.0
+            train_log_reg_loss = 0.0
             train_cls_loss = 0.0
             
             for batch_idx, batch in enumerate(train_loader):
@@ -863,15 +1331,17 @@ class Trainer:
                 structured_features = batch['structured_features'].to(self.device)
                 time_features = batch['time_features'].to(self.device)
                 targets = batch['targets'].to(self.device)
+                log_targets = batch['log_targets'].to(self.device)
                 class_targets = batch['class_targets'].to(self.device)
                 
                 # Forward pass
-                reg_predictions, cls_predictions, _ = self.model(
+                reg_predictions, log_reg_predictions, cls_predictions, _ = self.model(
                     text_features, structured_features, time_features
                 )
                 
                 # Calculate losses
                 reg_loss = regression_criterion(reg_predictions, targets)
+                log_reg_loss = log_regression_criterion(log_reg_predictions, log_targets)
                 
                 cls_loss = 0
                 for i in range(cls_predictions.shape[1]):
@@ -879,20 +1349,22 @@ class Trainer:
                 cls_loss /= cls_predictions.shape[1]
                 
                 # Combined loss with adaptive weighting
-                total_loss = reg_loss + 0.3 * cls_loss
+                total_loss = 0.4 * reg_loss + 0.4 * log_reg_loss + 0.2 * cls_loss
                 
-                # Backward pass
+                # Backward pass with gradient clipping
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optimizer.step()
                 scheduler.step()
                 
                 train_reg_loss += reg_loss.item()
+                train_log_reg_loss += log_reg_loss.item()
                 train_cls_loss += cls_loss.item()
             
             # Validation
             self.model.eval()
             val_reg_loss = 0.0
+            val_log_reg_loss = 0.0
             val_cls_loss = 0.0
             
             with torch.no_grad():
@@ -901,13 +1373,15 @@ class Trainer:
                     structured_features = batch['structured_features'].to(self.device)
                     time_features = batch['time_features'].to(self.device)
                     targets = batch['targets'].to(self.device)
+                    log_targets = batch['log_targets'].to(self.device)
                     class_targets = batch['class_targets'].to(self.device)
                     
-                    reg_predictions, cls_predictions, _ = self.model(
+                    reg_predictions, log_reg_predictions, cls_predictions, _ = self.model(
                         text_features, structured_features, time_features
                     )
                     
                     reg_loss = regression_criterion(reg_predictions, targets)
+                    log_reg_loss = log_regression_criterion(log_reg_predictions, log_targets)
                     
                     cls_loss = 0
                     for i in range(cls_predictions.shape[1]):
@@ -915,25 +1389,32 @@ class Trainer:
                     cls_loss /= cls_predictions.shape[1]
                     
                     val_reg_loss += reg_loss.item()
+                    val_log_reg_loss += log_reg_loss.item()
                     val_cls_loss += cls_loss.item()
             
             # Calculate average losses
             avg_train_reg_loss = train_reg_loss / len(train_loader)
+            avg_train_log_reg_loss = train_log_reg_loss / len(train_loader)
             avg_train_cls_loss = train_cls_loss / len(train_loader)
             avg_val_reg_loss = val_reg_loss / len(val_loader)
+            avg_val_log_reg_loss = val_log_reg_loss / len(val_loader)
             avg_val_cls_loss = val_cls_loss / len(val_loader)
-            avg_val_total_loss = avg_val_reg_loss + 0.3 * avg_val_cls_loss
+            avg_val_total_loss = 0.4 * avg_val_reg_loss + 0.4 * avg_val_log_reg_loss + 0.2 * avg_val_cls_loss
             
             # Store training history
             self.training_history['train_losses']['regression'].append(avg_train_reg_loss)
+            self.training_history['train_losses']['log_regression'].append(avg_train_log_reg_loss)
             self.training_history['train_losses']['classification'].append(avg_train_cls_loss)
             self.training_history['val_losses']['regression'].append(avg_val_reg_loss)
+            self.training_history['val_losses']['log_regression'].append(avg_val_log_reg_loss)
             self.training_history['val_losses']['classification'].append(avg_val_cls_loss)
             
             print(f'Epoch {epoch+1}/{epochs}:')
             print(f'  Train Regression Loss: {avg_train_reg_loss:.4f}')
+            print(f'  Train Log Regression Loss: {avg_train_log_reg_loss:.4f}')
             print(f'  Train Classification Loss: {avg_train_cls_loss:.4f}')
             print(f'  Val Regression Loss: {avg_val_reg_loss:.4f}')
+            print(f'  Val Log Regression Loss: {avg_val_log_reg_loss:.4f}')
             print(f'  Val Classification Loss: {avg_val_cls_loss:.4f}')
             print(f'  Learning Rate: {scheduler.get_last_lr()[0]:.2e}')
             
@@ -944,10 +1425,13 @@ class Trainer:
                 torch.save({
                     'model_state_dict': self.model.state_dict(),
                     'model_config': {
-                        'text_dim': train_loader.dataset.text_features.shape[1]
-                    }
+                        'text_dim': text_dim,
+                        'structured_dim': structured_dim,
+                        'temporal_dim': temporal_dim
+                    },
+                    'training_history': self.training_history
                 }, save_path)
-                print(f'  ✓ New model saved with val_loss: {best_val_loss:.4f}')
+                print(f'  ✓ Model saved with val_loss: {best_val_loss:.4f}')
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
@@ -964,14 +1448,19 @@ class Trainer:
     
     def evaluate_and_visualize(self, val_loader, y_val_reg, y_val_cls, baseline_results, 
                               model_path='ModelResults/tiktok_model.pth'):        
-        # Load best model
+        # Load model
         checkpoint = torch.load(model_path, map_location=self.device)
-        self.model = TikTokGrowthPredictor(text_dim=checkpoint['model_config']['text_dim'])
+        self.model = TikTokGrowthPredictor(
+            text_dim=checkpoint['model_config']['text_dim'],
+            structured_dim=checkpoint['model_config']['structured_dim'],
+            temporal_dim=checkpoint['model_config']['temporal_dim']
+        )
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.to(self.device)
         self.model.eval()
         
         regression_predictions = []
+        log_regression_predictions = []
         classification_predictions = []
         
         with torch.no_grad():
@@ -980,25 +1469,35 @@ class Trainer:
                 structured_features = batch['structured_features'].to(self.device)
                 time_features = batch['time_features'].to(self.device)
                 
-                reg_pred, cls_pred, _ = self.model(
+                reg_pred, log_reg_pred, cls_pred, _ = self.model(
                     text_features, structured_features, time_features
                 )
                 
                 regression_predictions.append(reg_pred.cpu().numpy())
+                log_regression_predictions.append(log_reg_pred.cpu().numpy())
                 classification_predictions.append(torch.softmax(cls_pred, dim=-1).cpu().numpy())
         
         regression_predictions = np.vstack(regression_predictions)
+        log_regression_predictions = np.vstack(log_regression_predictions)
         classification_predictions = np.vstack(classification_predictions)
+        
+        # Evaluation metrics
         neural_results = {}
         
         y_val_reg_avg = np.mean(y_val_reg, axis=1)
         reg_pred_avg = np.mean(regression_predictions, axis=1)
+        log_reg_pred_avg = np.mean(log_regression_predictions, axis=1)
         
+        # Standard regression metrics
         neural_results['mse'] = mean_squared_error(y_val_reg_avg, reg_pred_avg)
         neural_results['mae'] = mean_absolute_error(y_val_reg_avg, reg_pred_avg)
         neural_results['r2'] = r2_score(y_val_reg_avg, reg_pred_avg)
         
-        # Classification metrics (use engagement growth class)
+        # Log regression metrics
+        neural_results['log_mse'] = mean_squared_error(np.log1p(np.maximum(y_val_reg_avg, 0)), log_reg_pred_avg)
+        neural_results['log_r2'] = r2_score(np.log1p(np.maximum(y_val_reg_avg, 0)), log_reg_pred_avg)
+        
+        # Classification metrics
         y_val_cls_eng = y_val_cls[:, -1] 
         cls_pred_eng = np.argmax(classification_predictions[:, -1, :], axis=1)
         
@@ -1009,33 +1508,39 @@ class Trainer:
         print("\nModel Performance Comparison:")
         print("REGRESSION METRICS:")
         print(f"Neural Network - MSE: {neural_results['mse']:.4f}, R²: {neural_results['r2']:.4f}")
-        for model_name in ['linear_regression', 'random_forest_reg', 'xgboost_reg', 'lightgbm_reg', 'nbeats_reg']:
+        print(f"Neural Network (Log) - MSE: {neural_results['log_mse']:.4f}, R²: {neural_results['log_r2']:.4f}")
+        
+        for model_name in ['linear_regression', 'random_forest_reg', 'xgboost_reg', 'lightgbm_reg', 'catboost_reg', 'nbeats_reg']:
             if model_name in baseline_results:
                 print(f"{model_name.replace('_', ' ').title()} - MSE: {baseline_results[model_name]['mse']:.4f}, R²: {baseline_results[model_name]['r2']:.4f}")
         
         print("\nCLASSIFICATION METRICS:")
         print(f"Neural Network - Accuracy: {neural_results['accuracy']:.4f}, F1-Macro: {neural_results['f1_macro']:.4f}")
-        for model_name in ['logistic_regression', 'random_forest_cls', 'xgboost_cls', 'lightgbm_cls']:
+        for model_name in ['logistic_regression', 'random_forest_cls', 'xgboost_cls', 'lightgbm_cls', 'catboost_cls']:
             if model_name in baseline_results:
                 print(f"{model_name.replace('_', ' ').title()} - Accuracy: {baseline_results[model_name]['accuracy']:.4f}, F1-Macro: {baseline_results[model_name]['f1_macro']:.4f}")
         
         visualizer = Visualizer()
         
         best_reg_idx, best_cls_idx = visualizer.plot_model_performance_comparison(
-            neural_results, baseline_results, 'ModelResults/model_performance_economic.png'
+            neural_results, baseline_results, 'ModelResults/model_performance.png'
         )
         
         visualizer.plot_feature_importance(
             self.baseline_models.feature_importance, 
-            top_n=15, 
-            save_path='ModelResults/feature_importance_business.png'
+            top_n=20, 
+            save_path='ModelResults/feature_importance.png'
         )
         
         return neural_results, regression_predictions, classification_predictions
     
     def predict(self, training_data, user_trend_features, text_features, model_path='ModelResults/tiktok_model.pth'):
         checkpoint = torch.load(model_path, map_location=self.device)
-        self.model = TikTokGrowthPredictor(text_dim=checkpoint['model_config']['text_dim'])
+        self.model = TikTokGrowthPredictor(
+            text_dim=checkpoint['model_config']['text_dim'],
+            structured_dim=checkpoint['model_config']['structured_dim'],
+            temporal_dim=checkpoint['model_config']['temporal_dim']
+        )
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.model.to(self.device)
         self.model.eval()
@@ -1044,6 +1549,7 @@ class Trainer:
         dataloader = DataLoader(dataset, batch_size=16, shuffle=False, num_workers=0)
         
         regression_predictions = []
+        log_regression_predictions = []
         classification_predictions = []
         attention_weights = []
         
@@ -1053,23 +1559,27 @@ class Trainer:
                 structured_features = batch['structured_features'].to(self.device)
                 time_features = batch['time_features'].to(self.device)
                 
-                reg_pred, cls_pred, attn = self.model(
+                reg_pred, log_reg_pred, cls_pred, attn = self.model(
                     text_features, structured_features, time_features
                 )
                 
                 regression_predictions.append(reg_pred.cpu().numpy())
+                log_regression_predictions.append(log_reg_pred.cpu().numpy())
                 classification_predictions.append(torch.softmax(cls_pred, dim=-1).cpu().numpy())
                 attention_weights.append({k: v.cpu().numpy() if torch.is_tensor(v) else v 
                                         for k, v in attn.items()})
         
         regression_predictions = np.vstack(regression_predictions)
+        log_regression_predictions = np.vstack(log_regression_predictions)
         classification_predictions = np.vstack(classification_predictions)
         
         results_df = training_data.copy()
         
+        # Predictions
         growth_metrics = ['view', 'like', 'comment', 'share', 'save']
         for i, metric in enumerate(growth_metrics):
             results_df[f'pred_next_{metric}_growth'] = regression_predictions[:, i]
+            results_df[f'pred_next_{metric}_log_growth'] = log_regression_predictions[:, i]
         
         class_names = ['decrease', 'stable', 'increase']
         metric_names = ['view', 'like', 'comment', 'share', 'save', 'engagement']
@@ -1084,10 +1594,12 @@ class Trainer:
         
         return results_df, attention_weights
 
+
 if __name__ == "__main__":
+
     from Feature_Engineering import TikTokFeatureEngineer
 
-    csv_file_path = r"D:\UIT\DS200\DS200_Project\Dataset\Preprocessed_Data\training_data.csv"  # Preprocessed CSV
+    csv_file_path = r"D:\UIT\DS200\DS200_Project\Dataset\Preprocessed_Data\training_data.csv"
     engineer = TikTokFeatureEngineer()
     df = pd.read_csv(csv_file_path)
     features = engineer.transform(df)
@@ -1097,17 +1609,18 @@ if __name__ == "__main__":
         exit()
 
     trainer = Trainer()
-    train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, y_train_cls, y_val_cls, feature_names = trainer.prepare_data(
+    (train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, 
+     y_train_log_reg, y_val_log_reg, y_train_cls, y_val_cls, feature_names) = trainer.prepare_data(
         features['training_data'], 
         features['user_trend_features'],
         features['text_features'],
-        batch_size=4
+        batch_size=8 
     )
 
-    # Train models
     baseline_results = trainer.train(
-        train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, y_train_cls, y_val_cls,
-        feature_names, epochs=2, lr=2e-5
+        train_loader, val_loader, X_train, X_val, y_train_reg, y_val_reg, 
+        y_train_log_reg, y_val_log_reg, y_train_cls, y_val_cls,
+        feature_names, epochs=15, lr=1e-4
     )
 
     neural_results, reg_predictions, cls_predictions = trainer.evaluate_and_visualize(
@@ -1120,5 +1633,5 @@ if __name__ == "__main__":
         features['text_features']
     )
 
-    # Save results
     results_df.to_csv('ModelResults/tiktok_predictions.csv', index=False)
+    print(f"\nAll results saved to ModelResults/ directory")
