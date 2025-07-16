@@ -54,29 +54,34 @@ class TikTokFeatureEngineerOnline:
         text_content = []
         for idx in range(len(df)):
             row = df.iloc[idx]
-            caption = str(row.get('vid_caption', ''))
-            hashtags = str(row.get('vid_hashtag', ''))
+            caption = str(row.get('vid_desc_clean', ''))
+            hashtags = str(row.get('vid_hashtags_normalized', ''))
             category = str(row.get('vid_category', ''))
             
             combined_text = f"{caption} {hashtags} {category}".strip()
             if not combined_text or combined_text.isspace():
                 combined_text = "no content"
             text_content.append(combined_text)
+
+        if len(set(text_content)) == 1:
+            print("[TFIDF WARNING] All combined_text identical. Skipping TF-IDF.")
+            return np.zeros((len(df), self.max_text_features))
         
-        if self.text_vectorizer is None:
+        try:
             self.text_vectorizer = TfidfVectorizer(
                 max_features=self.max_text_features,
                 stop_words='english',
-                ngram_range=(1, 3), 
-                min_df=2,
-                max_df=0.95,
-                sublinear_tf=True 
+                ngram_range=(1, 3),
+                min_df=1,
+                max_df=1.0,
+                sublinear_tf=True
             )
-            text_features = self.text_vectorizer.fit_transform(text_content).toarray()
-        else:
-            text_features = self.text_vectorizer.transform(text_content).toarray()
-        
-        return text_features
+            self.text_vectorizer.fit(text_content)
+        except ValueError as e:
+            print(f"[TFIDF Fallback] Error during fit: {e}. Returning zero features.")
+            return np.zeros((len(df), self.max_text_features))
+            
+        return self.text_vectorizer.transform(text_content).toarray()
     
     # Tính các số liệu liên quan đến engagement 
     def _calculate_engagement_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -456,7 +461,7 @@ class TikTokFeatureEngineerOnline:
         return pd.concat(all_features, ignore_index=True)
     
     # 
-    def safe_get(df, col, default=0.0):
+    def safe_get(self, df, col, default=0.0):
         return df[col] if col in df.columns else pd.Series([default] * len(df))
 
     # Tạo training_data dựa trên đặc trưng video đã trích xuất 

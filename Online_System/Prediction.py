@@ -26,6 +26,12 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, struct, collect_list, size
 from pyspark.sql.types import *
 from pyspark.sql.functions import to_timestamp
+from pyspark.sql.functions import to_json, expr
+
+
+from kafka.admin import KafkaAdminClient, NewTopic
+from kafka.errors import TopicAlreadyExistsError
+import logging 
 
 
 # Enhanced imports with error handling
@@ -42,6 +48,8 @@ _model = None
 _fe = None
 _model_config = None
 _pre = TikTokPreprocessor() 
+
+column_names = ['user_name', 'user_nfollower', 'user_total_likes', 'vid_id', 'vid_caption', 'vid_postTime', 'vid_scrapeTime', 'vid_duration', 'vid_nview', 'vid_nlike', 'vid_ncomment', 'vid_nshare', 'vid_nsave', 'vid_hashtags', 'vid_url', 'music_id', 'music_title', 'music_nused', 'music_authorName', 'music_originality', 'topic']
 
 def get_model_and_fe():
     global _model, _fe, _model_config
@@ -100,7 +108,6 @@ def get_model_and_fe():
     
     return _model, _fe
 
-
 def predict_from_snapshots(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
     model, fe  = get_model_and_fe()
     device = 'cpu'
@@ -114,16 +121,15 @@ def predict_from_snapshots(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.Data
                     snapshots = pdf.iloc[idx]['snapshots']
                     if not isinstance(snapshots, list) or len(snapshots) == 0:
                         continue
-
                     snapshots_df = pd.DataFrame(snapshots)
-                    print("========[PREDICTION] Preprocessing data========")
-                    snapshots_df = _pre.transform(snapshots_df)
+                    # print(f"====[PREDICTION] - cac cot cua snapshot:\n{snapshots_df.columns}")
+                    # print(f"====[PREDICTION] - snapshots_df:\n{snapshots_df}")
 
+                    snapshots_df = _pre.transform(snapshots_df)
                     snapshots_df.dropna(subset=["vid_postTime", "vid_scrapeTime"], inplace=True)
                     if snapshots_df.empty:
                         continue
                     
-                    print("=======[PREDICTION] - Feature Engineering data=======")
                     input_fe = fe.transform(snapshots_df)
                     inference_df = input_fe.get("training_data")
                     if inference_df is None or inference_df.empty:
@@ -158,15 +164,23 @@ def predict_from_snapshots(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.Data
 
                     with torch.no_grad():
                         reg_output, _, cls_output, _ = model(text, struct_feat, time_feat)
-                        pred = float(torch.mean(reg_output[0]).item())
+
+                        predictions = reg_output[0].tolist()  # list of 5 float
                         cls_probs = torch.softmax(cls_output[0, -1, :], dim=0)
+                        cls_label = torch.argmax(cls_probs).item()
+                        cls_label_str = ["decrease", "stable", "increase"][cls_label]
                         confidence = float(torch.max(cls_probs).item())
 
                     result = {
                         "user_name": user,
                         "vid_id": vid,
                         "timestamp": datetime.utcnow().isoformat(),
-                        "prediction": pred,
+                        "prediction_view": float(predictions[0]),
+                        "prediction_like": float(predictions[1]),
+                        "prediction_comment": float(predictions[2]),
+                        "prediction_share": float(predictions[3]),
+                        "prediction_save": float(predictions[4]),
+                        "growth_category": cls_label_str,
                         "confidence": round(confidence, 4)
                     }
 
@@ -177,25 +191,26 @@ def predict_from_snapshots(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.Data
                     traceback.print_exc()
                     continue
 
-            if results:
-                yield pd.DataFrame(results)
-            else:
-                yield pd.DataFrame([], columns=[
-                "user_name", "vid_id", "timestamp", "prediction", "confidence"
+            yield pd.DataFrame(results) if results else pd.DataFrame([], columns=[
+                "user_name", "vid_id", "timestamp",
+                "prediction_view", "prediction_like", "prediction_comment",
+                "prediction_share", "prediction_save",
+                "growth_category", "confidence"
             ])
             
         except Exception as e:
             logger.error(f"Batch-level error: {e}")
             traceback.print_exc()
             yield pd.DataFrame([], columns=[
-                "user_name", "vid_id", "timestamp", "prediction", "confidence"
+                "user_name", "vid_id", "timestamp",
+                "prediction_view", "prediction_like", "prediction_comment",
+                "prediction_share", "prediction_save",
+                "growth_category", "confidence"
             ])
-        
         finally:
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-
 
 class TikTokProcessor:
     def __init__(self):
@@ -232,6 +247,10 @@ class TikTokProcessor:
             .getOrCreate()
 
         self.spark.sparkContext.setLogLevel("WARN")
+
+        # Nếu cần giảm cả log của hệ thống (như Ivy)
+        logging.getLogger("py4j").setLevel(logging.ERROR)
+
         logger.info("Enhanced Spark session created successfully")
 
     def _define_schema(self):
@@ -258,86 +277,166 @@ class TikTokProcessor:
                              StructField("music_originality", StringType(), True),
                              StructField("topic", StringType(), True)])
 
+    def _ensure_topic_exists(self, topic_name: str):
+        try:
+            admin_client = KafkaAdminClient(bootstrap_servers=self.bootstrap_servers)
+            existing_topics = admin_client.list_topics()
+
+            if topic_name not in existing_topics:
+                topic = NewTopic(name=topic_name, num_partitions=1, replication_factor=1)
+                admin_client.create_topics([topic])
+                logger.info(f"✅ Created topic '{topic_name}'")
+            else:
+                logger.info(f"✔️ Topic '{topic_name}' already exists")
+        except TopicAlreadyExistsError:
+            logger.info(f"✔️ Topic '{topic_name}' already exists")
+        except Exception as e:
+            logger.error(f"Error ensuring topic exists: {e}")
+        finally:
+            admin_client.close()
+
     def start(self):
         try:
             logger.info("Starting enhanced streaming pipeline...")
-            
-            print("====[PREDICITION] - Reading data from Kafka Topic 1====")
+
             df_raw = self.spark.readStream \
                 .format("kafka") \
                 .option("kafka.bootstrap.servers", self.bootstrap_servers) \
                 .option("subscribe", self.input_topic) \
                 .option("startingOffsets", "latest") \
                 .load()
-            # print(f"=========== df_raw =\n {df_raw}")
-            
-            print("====[PREDICTION] - Parsing data====")
+
             df_parsed = df_raw \
                 .select(from_json(col("value").cast("string"), self.schema).alias("data")) \
                 .select("data.*") \
                 .withColumn("vid_scrapeTime", to_timestamp("vid_scrapeTime")) \
                 .withColumn("vid_postTime", to_timestamp("vid_postTime"))
-            # print(f"=========== df_parsed =\n {df_parsed}")
 
-            print("====[PREDICTION] - Grouping data====")
             df_grouped = df_parsed \
                 .withWatermark("vid_scrapeTime", "15 minutes") \
                 .groupBy("user_name", "vid_id") \
                 .agg(collect_list(struct([col(c) for c in df_parsed.columns])).alias("snapshots")) \
                 .filter(size(col("snapshots")) >= self.min_snapshots)
-            # print(f"=========== df_grouped =\n {df_grouped}")
 
-            print("====[PREDICTION] - Define output schema====")
-            output_schema = StructType([
-                StructField("user_name", StringType(), True),
-                StructField("vid_id", StringType(), True),
-                StructField("timestamp", StringType(), True),
-                StructField("prediction", DoubleType(), True),
-                StructField("confidence", DoubleType(), True)
-            ])
+            self._ensure_topic_exists(self.output_topic)
 
-            print("====[PREDICTION] - Predicting output====")
-            df_predicted = df_grouped.mapInPandas(
-                predict_from_snapshots,
-                schema=output_schema
-            ).filter(col("prediction").isNotNull())
-            # print(f"=========== df_predicted =\n {df_predicted}")
+            def predict_batch(df_batch, epoch_id):
+                try:
+                    pdf = df_batch.toPandas()
+                    model, fe = get_model_and_fe()
+                    device = 'cpu'
+                    results = []
 
-            """
-            df_output = df_predicted.selectExpr(
-                "CAST(vid_id AS STRING) as key",
-                "to_json(struct(*)) as value"
-            )"""
+                    for idx, row in pdf.iterrows():
+                        try:
+                            snapshots = row["snapshots"]
+                            if not isinstance(snapshots, list) or len(snapshots) == 0:
+                                continue
 
-            print("====[PREDICTION] - Transforming output data to json for sending data to output Kafka Topic====")
-            df_output = df_predicted \
-                .filter(col("vid_id").isNotNull()) \
-                .filter(col("vid_id") != "") \
-                .selectExpr(
-                    "CAST(vid_id AS STRING) as key",
-                    "to_json(struct(*)) as value"
-                ) \
-                .filter(col("value").isNotNull())
+                            snapshots_df = pd.DataFrame(snapshots)
+                            
+                            if snapshots_df.shape[1] == len(column_names):
+                                snapshots_df.columns = column_names
+                            else:
+                                logger.warning(f"[ROW {idx}] ⚠️ Không khớp số lượng cột! {snapshots_df.shape[1]} cột thay vì {len(column_names)}.")
+                                logger.warning(f"[ROW {idx}] snapshot_df.columns: {snapshots_df.columns.tolist()}")
+                                continue  # Bỏ qua row không hợp lệ
 
-            print("====[PREDICTION] - Writing data to output Kafka Topic====")
-            query = df_output.writeStream \
-                .format("kafka") \
-                .option("kafka.bootstrap.servers", self.bootstrap_servers) \
-                .option("topic", self.output_topic) \
-                .option("checkpointLocation", "./enhanced_spark_checkpoint") \
+                            # print(f"====[PREDICTION] - cac cot cua snapshot:\n{snapshots_df.columns}")
+                            # print(f"====[PREDICTION] - snapshots_df:\n{snapshots_df}")
+
+                            snapshots_df = _pre.transform(snapshots_df)
+                            snapshots_df.dropna(subset=["vid_postTime", "vid_scrapeTime"], inplace=True)
+                            if snapshots_df.empty:
+                                continue
+
+                            input_fe = fe.transform(snapshots_df)
+                            inference_df = input_fe.get("training_data")
+                            if inference_df is None or inference_df.empty:
+                                continue
+
+                            user = str(snapshots_df["user_name"].iloc[0])
+                            vid = str(snapshots_df["vid_id"].iloc[0])
+
+                            row_match = inference_df[
+                                (inference_df["user_name"].astype(str) == user) &
+                                (inference_df["vid_id"].astype(str) == vid)
+                            ]
+                            if row_match.empty:
+                                continue
+
+                            match_idx = row_match.index[0]
+                            dataset = TikTokDataset(
+                                inference_df,
+                                input_fe["user_trend_features"],
+                                input_fe["text_features"],
+                                mode='predict'
+                            )
+                            if len(dataset) == 0:
+                                continue
+
+                            dataset_idx = min(match_idx, len(dataset) - 1)
+                            sample = dataset[dataset_idx]
+
+                            text = sample["text_features"].unsqueeze(0).to(device).float()
+                            struct_feat = sample["structured_features"].unsqueeze(0).to(device).float()
+                            time_feat = sample["time_features"].unsqueeze(0).to(device).float()
+
+                            with torch.no_grad():
+                                reg_output, _, cls_output, _ = model(text, struct_feat, time_feat)
+
+                                predictions = reg_output[0].tolist()
+                                cls_probs = torch.softmax(cls_output[0, -1, :], dim=0)
+                                cls_label = torch.argmax(cls_probs).item()
+                                cls_label_str = ["decrease", "stable", "increase"][cls_label]
+                                confidence = float(torch.max(cls_probs).item())
+
+                            result = {
+                                "user_name": user,
+                                "vid_id": vid,
+                                "timestamp": datetime.utcnow().isoformat(),
+                                "prediction_view": float(predictions[0]),
+                                "prediction_like": float(predictions[1]),
+                                "prediction_comment": float(predictions[2]),
+                                "prediction_share": float(predictions[3]),
+                                "prediction_save": float(predictions[4]),
+                                "growth_category": cls_label_str,
+                                "confidence": round(confidence, 4)
+                            }
+                            results.append(result)
+
+                        except Exception as e:
+                            logger.error(f"Error in row {idx}: {e}")
+                            traceback.print_exc()
+
+                    if results:
+                        out_df = self.spark.createDataFrame(pd.DataFrame(results))
+                        out_df = out_df.selectExpr(
+                            "CAST(vid_id AS STRING) as key",
+                            "to_json(struct(*)) as value"
+                        )
+                        out_df.write \
+                            .format("kafka") \
+                            .option("kafka.bootstrap.servers", self.bootstrap_servers) \
+                            .option("topic", self.output_topic) \
+                            .save()
+
+                except Exception as e:
+                    logger.error(f"Error in predict_batch: {e}")
+                    traceback.print_exc()
+
+            df_grouped.writeStream \
+                .foreachBatch(predict_batch) \
                 .outputMode("update") \
-                .start()
-
-            logger.info(f"✅ Enhanced Spark stream started: {self.input_topic} → {self.output_topic}")
-            query.awaitTermination()
+                .option("checkpointLocation", "./enhanced_spark_checkpoint") \
+                .start() \
+                .awaitTermination()
 
         except KeyboardInterrupt:
             logger.info("Process interrupted by user")
         except Exception as e:
             logger.error(f"Streaming pipeline error: {e}")
             traceback.print_exc()
-            raise
-
         finally:
             logger.info("Prediction system shutdown complete")
 
@@ -345,5 +444,5 @@ class TikTokProcessor:
 if __name__ == "__main__":
 
     processor = TikTokProcessor()
-    print("STARTING READING DATA FROM INPUT KAFKA")
+    # print("===============STARTING READING DATA FROM INPUT KAFKA===============")
     processor.start()

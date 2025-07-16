@@ -36,11 +36,12 @@ class TikTokDataset(Dataset):
         
     def __len__(self):
         return len(self.training_data)
-        
+    
+    # Lấy dữ liệu từng dòng / records
     def __getitem__(self, idx):
         row = self.training_data.iloc[idx]
         
-        # Text features from TF-IDF (pre-computed)
+        # Text features from TF-IDF (pre-computed) thứ idx
         text_features = torch.tensor(self.text_features[idx], dtype=torch.float32)
         
         # Safe value extraction with better handling
@@ -238,11 +239,12 @@ class TikTokDataset(Dataset):
         
         return result
 
+# Build mô hình dựa trên Transformer Encoder --> xử lý đặc trưng dạng bảng
 class EnhancedTabTransformer(nn.Module):    
     def __init__(self, input_dim, hidden_dim=256, num_heads=8, num_layers=6, dropout=0.1):
         super().__init__()
         
-        # Enhanced input processing with residual connections
+        # Chuyển đặc trưng đầu vào từ input_dim -> hidden_dim, đồng thời chuẩn hóa và kích hoạt GELU 
         self.input_projection = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -250,11 +252,12 @@ class EnhancedTabTransformer(nn.Module):
             nn.Dropout(dropout)
         )
         
-        # Feature embedding for categorical-like features
+        # Tạo embedding riêng cho từng feature 
         self.feature_embeddings = nn.ModuleList([
             nn.Linear(1, hidden_dim // 8) for _ in range(min(input_dim, 16))
         ])
         
+        # Chuẩn hóa 
         self.layer_norm_input = nn.LayerNorm(hidden_dim)
         
         # Enhanced transformer layers with different attention patterns
@@ -275,7 +278,7 @@ class EnhancedTabTransformer(nn.Module):
             hidden_dim, num_heads=num_heads, dropout=dropout, batch_first=True
         )
         
-        # Enhanced output processing
+        # Enhanced output processing: Linear → Norm → GELU → Dropout → Linear 
         self.output_projection = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -308,6 +311,7 @@ class EnhancedTabTransformer(nn.Module):
         
         return x_proj, attention_weights
 
+# Temporal Fusion Transformer (TFT) model 
 class EnhancedTemporalFusionTransformer(nn.Module):    
     def __init__(self, input_dim, hidden_dim=256, num_heads=8, num_layers=6, dropout=0.1):
         super().__init__()
@@ -401,6 +405,7 @@ class EnhancedTemporalFusionTransformer(nn.Module):
         
         return self.output_projection(x)
 
+# Multi-modal model 
 class EnhancedMultiModalFusion(nn.Module):    
     def __init__(self, text_dim, structured_dim, temporal_dim, fusion_dim=512):
         super().__init__()
@@ -519,6 +524,7 @@ class EnhancedMultiModalFusion(nn.Module):
         
         return fused_features, attention_weights
 
+# Main class: multi-head model 
 class EnhancedTikTokGrowthPredictor(nn.Module):    
     def __init__(self, 
                  text_dim=512, 
@@ -663,7 +669,9 @@ class EnhancedTikTokGrowthPredictor(nn.Module):
         
         return regression_predictions, log_regression_predictions, classification_predictions, all_attention_weights
 
+
 # N-BEATS Implementation for Time Series Forecasting (Enhanced)
+# Khối (blocks) của N-Beats 
 class EnhancedNBeatsBlock(nn.Module):
     def __init__(self, input_size, theta_size, basis_function, layers, layer_size, dropout=0.1):
         super().__init__()
@@ -685,6 +693,7 @@ class EnhancedNBeatsBlock(nn.Module):
         backcast, forecast = self.basis_function(theta)
         return backcast, forecast
 
+# N-BEATS model - cải tiến của các N-Beats blocks
 class EnhancedNBeatsModel(nn.Module):
     def __init__(self, input_size=128, forecast_size=5, stack_types=['generic'], 
                  nb_blocks_per_stack=3, hidden_layer_units=512, dropout=0.1):
@@ -726,6 +735,7 @@ class EnhancedNBeatsModel(nn.Module):
                 
         return forecast
 
+# Hàm cơ sở cho module dự đoán của N-Beats
 class GenericBasis(nn.Module):
     def __init__(self, backcast_size, forecast_size):
         super().__init__()
@@ -737,6 +747,7 @@ class GenericBasis(nn.Module):
         forecast = theta[:, -self.forecast_size:]
         return backcast, forecast
 
+# Pipeline baseline model 
 class ModernBaselineModels:
     def __init__(self):
         self.models = {
@@ -1068,6 +1079,7 @@ class ModernBaselineModels:
         
         return results
 
+# Visualizing model predictions 
 class Visualizer:    
     @staticmethod
     def plot_model_performance_comparison(neural_results, baseline_results, save_path='ModelResults/model_performance.png'):
@@ -1210,6 +1222,7 @@ class Visualizer:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         plt.show()
 
+# Orchestrator - bộ điều khiển huấn luyện toàn bộ hệ thống 
 class EnhancedTrainer:    
     def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
@@ -1599,7 +1612,9 @@ class EnhancedTrainer:
         
         return results_df, attention_weights
 
+
 if __name__ == "__main__":
+
     from Feature_Engineering import TikTokFeatureEngineer
 
     csv_file_path = r"D:\UIT\DS200\DS200_Project\Dataset\Preprocessed_Data\training_data.csv"
@@ -1638,3 +1653,5 @@ if __name__ == "__main__":
 
     results_df.to_csv('ModelResults/enhanced_tiktok_predictions.csv', index=False)
     print(f"\n✅ All enhanced results saved to ModelResults/ directory")
+
+    

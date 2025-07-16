@@ -3,7 +3,7 @@
 KAFKA_CONFIG = {
     "bootstrap_servers": "localhost:9092",
     "streaming_topic": "streaming_data_topic",
-    "delay_between_messages": 1,
+    "delay_between_messages": 3,
 }
 
 FEATURE_ENGINEERING_CONFIG = {
@@ -28,7 +28,7 @@ DASHBOARD_CONFIG = {
 
 MONGODB_CONFIG = {
     "uri": "mongodb://localhost:27017",
-    "database": "TikTokPrediction",
+    "database": "TikTok_Database",
     "collection": "predictions"
 }
 
