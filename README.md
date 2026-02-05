@@ -35,9 +35,9 @@ DS200.P21_Big_Data/
 │   ├── model.py
 │   ├── vietnamese-stopwords-dash.txt
 ├── Online_System/
-│   ├── checkpoints
-│   ├── mongo_checkpoint
-│   ├── enhanced_spark_checkpoint
+│   ├── checkpoints/
+│   ├── mongo_checkpoint/
+│   ├── enhanced_spark_checkpoint/
 │   ├── Dashboard.py
 │   ├── Prediction.py
 │   ├── Preprocessor.py
@@ -53,3 +53,4 @@ DS200.P21_Big_Data/
 ├── .gitattributes
 ├── .gitignore
 └── README.md
+
